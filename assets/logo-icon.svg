@@ -1,0 +1,14 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="audit icon">
+  <defs>
+    <linearGradient id="bg" x1="8" y1="4" x2="120" y2="124" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6366F1"/>
+      <stop offset="0.52" stop-color="#7C3AED"/>
+      <stop offset="1" stop-color="#06B6D4"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="30" fill="url(#bg)"/>
+  <path d="M64 22 L93 33 V63 C93 83 80 97 64 105 C48 97 35 83 35 63 V33 Z" fill="#FFFFFF"/>
+  <circle cx="59" cy="57" r="15" fill="none" stroke="#7C3AED" stroke-width="6"/>
+  <line x1="70.5" y1="68.5" x2="83" y2="81" stroke="#7C3AED" stroke-width="7.5" stroke-linecap="round"/>
+  <path d="M52 57 l5 5 l9.5 -11" fill="none" stroke="#06B6D4" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

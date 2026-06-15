@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FeedbackOutput",
+  "description": "New hunt tasks derived from reachable traces — pipeline learning loop.",
+  "type": "object",
+  "required": ["new_hunt_tasks"],
+  "additionalProperties": false,
+  "properties": {
+    "new_hunt_tasks": {
+      "type": "array",
+      "items": { "$ref": "hunt_task.schema.json" }
+    },
+    "rationale_per_task": {
+      "type": "object",
+      "description": "Map task_id -> short note explaining which trace pattern motivated this task.",
+      "additionalProperties": { "type": "string" }
+    }
+  }
+}

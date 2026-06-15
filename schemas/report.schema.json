@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Report",
+  "description": "Final structured report — only reachable, deduped findings.",
+  "type": "object",
+  "required": ["run_id", "target", "summary", "findings"],
+  "additionalProperties": false,
+  "properties": {
+    "run_id": { "type": "string" },
+    "target": {
+      "type": "object",
+      "required": ["repo_path"],
+      "additionalProperties": false,
+      "properties": {
+        "repo_path": { "type": "string" },
+        "commit": { "type": "string" }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["total", "by_severity"],
+      "additionalProperties": false,
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "by_severity": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "critical":      { "type": "integer", "minimum": 0 },
+            "high":          { "type": "integer", "minimum": 0 },
+            "medium":        { "type": "integer", "minimum": 0 },
+            "low":           { "type": "integer", "minimum": 0 },
+            "informational": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["finding_id", "title", "severity", "vuln_class", "file", "line_start", "line_end", "description", "evidence", "trace", "recommendation"],
+        "additionalProperties": false,
+        "properties": {
+          "finding_id": { "type": "string" },
+          "title": { "type": "string", "minLength": 5 },
+          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low", "informational"] },
+          "vuln_class": { "type": "string" },
+          "cwe": { "type": "string", "pattern": "^CWE-[0-9]+$" },
+          "file": { "type": "string" },
+          "line_start": { "type": "integer", "minimum": 1 },
+          "line_end": { "type": "integer", "minimum": 1 },
+          "description": { "type": "string", "minLength": 30 },
+          "evidence": { "type": "string" },
+          "trace": {
+            "type": "object",
+            "required": ["entry_points", "call_chain"],
+            "additionalProperties": false,
+            "properties": {
+              "entry_points": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["kind", "location"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": { "type": "string" },
+                    "location": { "type": "string" },
+                    "controllable_by": { "type": "string" }
+                  }
+                }
+              },
+              "call_chain": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["file", "function", "line"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "file": { "type": "string" },
+                    "function": { "type": "string" },
+                    "line": { "type": "integer", "minimum": 1 }
+                  }
+                }
+              }
+            }
+          },
+          "poc": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "language": { "type": "string" },
+              "code": { "type": "string" },
+              "succeeded": { "type": "boolean" }
+            }
+          },
+          "variants": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Other finding_ids in the same dedupe group."
+          },
+          "recommendation": { "type": "string", "minLength": 20 }
+        }
+      }
+    }
+  }
+}

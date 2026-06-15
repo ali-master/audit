@@ -1,0 +1,51 @@
+# Per-stage configuration. Model diversity between Hunt and Validate is
+# load-bearing: it implements the blog's "deliberate disagreement" rule.
+# Trace runs on Opus because the paper calls it "the stage that matters most."
+
+defaults:
+  max_turns: 25
+  permission_mode: acceptEdits   # never bypassPermissions
+  repair_attempts: 1             # one re-emit chance on schema-validation failure
+
+stages:
+  recon:
+    model: claude-opus-4-7
+    concurrency: 1
+    tools: [Read, Grep, Glob, Bash]
+    max_turns: 60                # recon can be long
+    repair_attempts: 2           # critical one-shot; spend a second repair turn if needed
+  hunt:
+    model: claude-sonnet-4-6
+    concurrency: 50
+    tools: [Read, Grep, Glob, Bash]
+  validate:
+    model: claude-opus-4-7        # different from hunt — deliberate disagreement
+    concurrency: 10
+    tools: [Read, Grep, Glob]     # no Bash: pure analysis
+  gapfill:
+    model: claude-sonnet-4-6
+    concurrency: 1
+    tools: [Read, Grep, Glob]
+    repair_attempts: 2
+  dedupe:
+    model: claude-sonnet-4-6
+    concurrency: 1
+    tools: [Read]
+  trace:
+    model: claude-opus-4-7        # most critical stage
+    concurrency: 10
+    tools: [Read, Grep, Glob, Bash]
+  feedback:
+    model: claude-sonnet-4-6
+    concurrency: 1
+    tools: [Read, Grep, Glob]
+    repair_attempts: 2
+  report:
+    model: claude-sonnet-4-6
+    concurrency: 1
+    tools: [Read]
+
+# Bounded loops to prevent runaway cost
+loops:
+  gapfill_iterations: 2     # max Hunt → Validate → Gapfill cycles
+  feedback_iterations: 1    # one feedback pass after Trace

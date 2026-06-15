@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HuntOutput",
+  "description": "Output of one Hunt task: zero-or-more findings plus coverage gaps.",
+  "type": "object",
+  "required": ["task_id", "findings", "gaps_observed"],
+  "additionalProperties": false,
+  "properties": {
+    "task_id": { "type": "string" },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["finding_id", "file", "line_start", "line_end", "vuln_class", "severity", "description", "evidence_snippet", "confidence"],
+        "additionalProperties": false,
+        "properties": {
+          "finding_id": { "type": "string", "pattern": "^f_[a-z0-9_-]{1,64}$" },
+          "file": { "type": "string" },
+          "line_start": { "type": "integer", "minimum": 1 },
+          "line_end": { "type": "integer", "minimum": 1 },
+          "vuln_class": { "type": "string" },
+          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low", "informational"] },
+          "cwe": { "type": "string", "pattern": "^CWE-[0-9]+$" },
+          "description": { "type": "string", "minLength": 20 },
+          "evidence_snippet": { "type": "string", "description": "Verbatim code excerpt that demonstrates the flaw." },
+          "poc": {
+            "type": "object",
+            "description": "Optional proof-of-concept attempt.",
+            "required": ["language", "code", "succeeded"],
+            "additionalProperties": false,
+            "properties": {
+              "language": { "type": "string" },
+              "code": { "type": "string" },
+              "compile_output": { "type": "string" },
+              "run_output": { "type": "string" },
+              "succeeded": { "type": "boolean" },
+              "notes": { "type": "string" }
+            }
+          },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "hedged_language": {
+            "type": "boolean",
+            "description": "Set true if the description uses 'might'/'could'/'possibly' — flags noise for triage."
+          }
+        }
+      }
+    },
+    "gaps_observed": {
+      "type": "array",
+      "description": "Areas the hunter could not fully examine — feeds Gapfill.",
+      "items": {
+        "type": "object",
+        "required": ["file_or_subsystem", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "file_or_subsystem": { "type": "string" },
+          "reason": { "type": "string" },
+          "suggested_attack_class": { "type": "string" }
+        }
+      }
+    }
+  }
+}

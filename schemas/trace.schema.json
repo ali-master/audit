@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Trace",
+  "description": "Reachability verdict for a single canonical finding.",
+  "type": "object",
+  "required": ["finding_id", "reachable", "confidence", "rationale"],
+  "additionalProperties": false,
+  "properties": {
+    "finding_id": { "type": "string" },
+    "reachable": {
+      "type": "boolean",
+      "description": "True iff attacker-controlled input from an external entry point can reach the sink."
+    },
+    "entry_points": {
+      "type": "array",
+      "description": "External entry points from which the sink is reachable. Empty if reachable=false.",
+      "items": {
+        "type": "object",
+        "required": ["kind", "location"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": { "type": "string", "description": "http_route|cli|rpc|message_queue|webhook|cron|library_api|file_input" },
+          "location": { "type": "string", "description": "file:line or symbol" },
+          "auth_required": { "type": "boolean" },
+          "controllable_by": { "type": "string" }
+        }
+      }
+    },
+    "call_chain": {
+      "type": "array",
+      "description": "Ordered chain from entry to sink. First element is the entry frame; last is the sink.",
+      "items": {
+        "type": "object",
+        "required": ["file", "function", "line"],
+        "additionalProperties": false,
+        "properties": {
+          "file": { "type": "string" },
+          "function": { "type": "string" },
+          "line": { "type": "integer", "minimum": 1 },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "external_inputs": {
+      "type": "array",
+      "description": "Specific input parameters that flow into the sink.",
+      "items": { "type": "string" }
+    },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "rationale": { "type": "string", "minLength": 20 },
+    "blockers": {
+      "type": "array",
+      "description": "Reasons the path is NOT reachable (sanitizers, auth gates, dead code, etc.).",
+      "items": {
+        "type": "object",
+        "required": ["kind", "location", "description"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": { "type": "string", "description": "sanitizer|auth_check|input_validation|dead_code|feature_flag|other" },
+          "location": { "type": "string" },
+          "description": { "type": "string" }
+        }
+      }
+    }
+  }
+}

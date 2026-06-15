@@ -1,0 +1,58 @@
+<svg width="1280" height="640" viewBox="0 0 1280 640" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="audit — 8-stage AI vulnerability-discovery agent">
+  <defs>
+    <linearGradient id="page" x1="0" y1="0" x2="1280" y2="640" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0B1020"/>
+      <stop offset="1" stop-color="#0E1424"/>
+    </linearGradient>
+    <radialGradient id="glow1" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(180 200) rotate(40) scale(520)">
+      <stop stop-color="#7C3AED" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#7C3AED" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1120 560) rotate(220) scale(560)">
+      <stop stop-color="#06B6D4" stop-opacity="0.40"/>
+      <stop offset="1" stop-color="#06B6D4" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="bg" x1="40" y1="20" x2="472" y2="492" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6366F1"/>
+      <stop offset="0.52" stop-color="#7C3AED"/>
+      <stop offset="1" stop-color="#06B6D4"/>
+    </linearGradient>
+    <linearGradient id="shield" x1="160" y1="92" x2="352" y2="430" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#DCE3F0"/>
+    </linearGradient>
+    <linearGradient id="word" x1="360" y1="240" x2="700" y2="330" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#C7D2FE"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#page)"/>
+  <rect width="1280" height="640" fill="url(#glow1)"/>
+  <rect width="1280" height="640" fill="url(#glow2)"/>
+  <rect x="0" y="0" width="1280" height="6" fill="url(#bg)"/>
+
+  <!-- logo badge (reused mark) -->
+  <g transform="translate(104,206) scale(0.4063)">
+    <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+    <rect width="512" height="512" rx="116" fill="#FFFFFF" opacity="0.06"/>
+    <path d="M256 86 L374 130 V252 C374 334 322 392 256 426 C190 392 138 334 138 252 V130 Z" fill="url(#shield)"/>
+    <circle cx="238" cy="228" r="60" fill="none" stroke="#7C3AED" stroke-width="24"/>
+    <line x1="283" y1="273" x2="332" y2="322" stroke="#7C3AED" stroke-width="30" stroke-linecap="round"/>
+    <path d="M210 228 l20 21 l38 -44" fill="none" stroke="#06B6D4" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <g font-family="'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif">
+    <text x="372" y="300" font-size="150" font-weight="800" letter-spacing="-4" fill="url(#word)">audit</text>
+    <text x="378" y="356" font-size="34" font-weight="600" fill="#A5B4FC">8-stage AI vulnerability-discovery agent</text>
+    <text x="378" y="398" font-size="23" font-weight="400" fill="#7C8AA5">Many narrow agents · deliberate disagreement · reachability as the gate</text>
+
+    <!-- pipeline -->
+    <text x="106" y="520" font-size="26" font-weight="700" fill="#CBD5E1" letter-spacing="0.5">
+      <tspan fill="#A5B4FC">Recon</tspan><tspan fill="#475569"> → </tspan><tspan>Hunt</tspan><tspan fill="#475569"> → </tspan><tspan>Validate</tspan><tspan fill="#475569"> → </tspan><tspan>Gapfill</tspan><tspan fill="#475569"> → </tspan><tspan>Dedupe</tspan><tspan fill="#475569"> → </tspan><tspan>Trace</tspan><tspan fill="#475569"> → </tspan><tspan>Feedback</tspan><tspan fill="#475569"> → </tspan><tspan fill="#67E8F9">Report</tspan>
+    </text>
+
+    <text x="106" y="582" font-size="22" font-weight="500" fill="#64748B">Bun · TypeScript · Claude Agent SDK · subscription-billed, no API key</text>
+    <text x="1174" y="70" text-anchor="end" font-size="22" font-weight="600" fill="#475569">MIT · open source</text>
+  </g>
+</svg>

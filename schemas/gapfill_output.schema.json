@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "GapfillOutput",
+  "description": "New hunt tasks targeting under-covered areas + attack classes.",
+  "type": "object",
+  "required": ["new_tasks", "coverage_analysis"],
+  "additionalProperties": false,
+  "properties": {
+    "new_tasks": {
+      "type": "array",
+      "items": { "$ref": "hunt_task.schema.json" }
+    },
+    "coverage_analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "light_subsystems": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["subsystem", "reason"],
+            "additionalProperties": false,
+            "properties": {
+              "subsystem": { "type": "string" },
+              "reason": { "type": "string" },
+              "findings_count": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "unattempted_attack_classes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["subsystem", "attack_class"],
+            "additionalProperties": false,
+            "properties": {
+              "subsystem": { "type": "string" },
+              "attack_class": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
