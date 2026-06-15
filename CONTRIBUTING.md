@@ -61,7 +61,7 @@ See [`docs/`](docs/) for the full reference.
 
 ## Pull requests
 
-1. Fork and branch from `master` (`git checkout -b feat/your-thing`).
+1. Fork and branch from `main` (`git checkout -b feat/your-thing`).
 2. Make your change; add or update tests under `tests/` when you touch logic.
 3. Run the full local gate:
    ```bash

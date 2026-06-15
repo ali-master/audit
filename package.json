@@ -39,7 +39,7 @@
     "url": "https://github.com/ali-master/audit/issues"
   },
   "homepage": "https://github.com/ali-master/audit#readme",
-  "logo": "https://raw.githubusercontent.com/ali-master/audit/master/assets/logo.svg",
+  "logo": "https://raw.githubusercontent.com/ali-master/audit/main/assets/logo.svg",
   "engines": {
     "bun": ">=1.3.0"
   },
