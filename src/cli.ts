@@ -120,7 +120,11 @@ function collect(value: string, prev: string[]): string[] {
 program
   .command("run")
   .description("Run the full 8-stage pipeline against a target repo.")
-  .requiredOption("--repo <path>", "Path to the target source-code repo.")
+  .option(
+    "--repo <path>",
+    "Path to the target source-code repo (default: current directory).",
+    process.cwd(),
+  )
   .option("--run-id <id>", "Run identifier (default: random).")
   .option("--resume", "Resume an existing run-id.")
   .option(

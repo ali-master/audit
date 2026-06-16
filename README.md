@@ -61,24 +61,38 @@ Full details in **[docs/stages.md](docs/stages.md)**.
 ## Quickstart
 
 ```bash
-# 1. Install — requires Bun ≥ 1.1 (https://bun.sh)
-bun install
+# 1. Install globally — requires Bun ≥ 1.3 (https://bun.sh)
+bun add -g @usex/audit
 
 # 2. Auth — already logged in via `claude login`? You're done.
 #    Or, for CI / headless:
 claude setup-token && echo "CLAUDE_CODE_OAUTH_TOKEN=<paste>" > .env
 
 # 3. Verify
-bun run src/cli.ts auth-check
+audit auth-check
 
-# 4. Run
-bun run src/cli.ts run --repo /path/to/target --run-id my-run
-bun run src/cli.ts status --run-id my-run
-bun run src/cli.ts report --run-id my-run --format md > report.md
+# 4. Run — `cd` into the repo you want to audit; results/state.db land there
+cd /path/to/target
+audit run --run-id my-run
+audit status --run-id my-run
+audit report --run-id my-run --format md > report.md
 ```
 
-> `bun run src/cli.ts <cmd>` is the entry point. `bun link` the package to get
-> an `audit` binary on your `PATH`.
+> The global install exposes an `audit` binary on your `PATH`. It runs under the
+> Bun runtime (the bundled CLI uses `bun:sqlite`), so Bun must be installed even
+> when invoked via npm.
+>
+> **Where state lives:** scan artifacts (`results/`, `work/`, `state.db`) are
+> written to the current working directory — the repo you're auditing — not the
+> install location. Set `AUDIT_DATA_DIR=/some/path` to redirect them.
+
+### From source (development)
+
+```bash
+bun install
+bun run src/cli.ts auth-check          # run directly from source
+bun link                               # or expose the `audit` binary locally
+```
 
 ### Keep it cheap
 
