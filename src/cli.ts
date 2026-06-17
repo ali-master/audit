@@ -404,7 +404,10 @@ function renderMarkdownReport(report: Json): string {
 }
 
 // Notify the user when a newer version of the CLI is published to npm.
-updateNotifier({ pkg: { name: pkg.name, version: pkg.version } }).notify();
+updateNotifier({ pkg: { name: pkg.name, version: pkg.version } }).notify({
+  isGlobal: true,
+  defer: false, // Show immediately
+});
 
 program.parseAsync().catch((e) => {
   log.error(String((e as Error)?.stack ?? e));
