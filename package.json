@@ -1,6 +1,6 @@
 {
   "name": "@usex/audit",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "A Cloudflare-style 8-stage vulnerability-discovery agent, driven by your Claude subscription through the Claude Agent SDK. Bun + TypeScript.",
   "type": "module",
   "main": "dist/index.js",
