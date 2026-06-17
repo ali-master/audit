@@ -164,6 +164,7 @@ entry-point→sink path, not just the sink. See the [CLI reference](docs/cli.md)
 - ✅ **Bug-bounty / VDP triage** — `audit triage --report` reproduces an inbound submission, then runs it through the adversarial reviewer + reachability gate and dedupes it, emitting an accept/reject/duplicate verdict.
 - ✅ Git-history mining — seeds hunts against unpatched siblings of past fixes.
 - ✅ Resumable runs, per-stage concurrency, and a hard cost ceiling.
+- ✅ **Background runs** — `audit run -d` detaches the pipeline; `audit sessions` lists what's active and whether it's still alive.
 
 ## Documentation
 

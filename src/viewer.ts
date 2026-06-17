@@ -158,6 +158,10 @@ export function serveViewer(
   const reportedHost = host === "0.0.0.0" ? "localhost" : host;
   const url = `http://${reportedHost}:${server.port}`;
   log.success(`triage viewer at ${url}  (run ${runId}) — Ctrl-C to stop`);
+  if (host !== "127.0.0.1" && host !== "localhost")
+    log.warn(
+      `viewer is bound to ${host} and has no authentication — anyone who can reach this host can read findings and change triage state`,
+    );
   return { url, stop: () => server.stop(true) };
 }
 

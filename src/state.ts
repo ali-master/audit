@@ -107,6 +107,15 @@ const SCHEMA_STATEMENTS = [
     note TEXT,
     updated_at REAL NOT NULL
   )`,
+  // Background run sessions: the detached process driving a run, so `audit
+  // sessions` can list active runs and tell which are still alive.
+  `CREATE TABLE IF NOT EXISTS sessions (
+    run_id TEXT PRIMARY KEY,
+    pid INTEGER NOT NULL,
+    log_path TEXT,
+    command TEXT,
+    started_at REAL NOT NULL
+  )`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_run_status ON tasks(run_id, status)`,
   `CREATE INDEX IF NOT EXISTS idx_findings_run ON findings(run_id)`,
   `CREATE INDEX IF NOT EXISTS idx_findings_validation ON findings(validation_status)`,
@@ -173,6 +182,14 @@ export interface StageCostRow {
 export interface TriageRow {
   status: string;
   note: string | null;
+}
+
+export interface SessionRow {
+  run_id: string;
+  pid: number;
+  log_path: string | null;
+  command: string | null;
+  started_at: number;
 }
 
 export interface ResultUsage {
@@ -243,6 +260,52 @@ export class StateDB {
     return this.db
       .query("SELECT * FROM runs ORDER BY started_at DESC")
       .all() as RunRow[];
+  }
+
+  /** Runs that are currently in progress (foreground or background). */
+  runningRuns(): RunRow[] {
+    return this.db
+      .query(
+        "SELECT * FROM runs WHERE status = 'running' ORDER BY started_at DESC",
+      )
+      .all() as RunRow[];
+  }
+
+  // ---------- background sessions ----------
+
+  /** Register (or replace) the detached process driving a background run. */
+  recordSession(
+    runId: string,
+    pid: number,
+    logPath: string | null,
+    command: string | null,
+  ): void {
+    this.db.run(
+      `INSERT INTO sessions (run_id, pid, log_path, command, started_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(run_id) DO UPDATE SET
+         pid = excluded.pid,
+         log_path = excluded.log_path,
+         command = excluded.command,
+         started_at = excluded.started_at`,
+      [runId, pid, logPath, command, now()],
+    );
+  }
+
+  getSession(runId: string): SessionRow | null {
+    return (
+      (this.db
+        .query("SELECT * FROM sessions WHERE run_id = ?")
+        .get(runId) as SessionRow) ?? null
+    );
+  }
+
+  /** Drop session rows whose run is no longer running. Returns rows removed. */
+  pruneFinishedSessions(): number {
+    return this.db.run(
+      `DELETE FROM sessions WHERE run_id IN
+         (SELECT run_id FROM runs WHERE status != 'running')`,
+    ).changes;
   }
 
   /** Mark a resumed run back to 'running' and clear its finish time. */

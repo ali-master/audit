@@ -4,8 +4,14 @@
  * runs under Bun (uses bun:sqlite and other Bun-native APIs).
  */
 
-import { writeFileSync, readFileSync, existsSync } from "node:fs";
-import { resolve, join } from "node:path";
+import {
+  writeFileSync,
+  readFileSync,
+  openSync,
+  mkdirSync,
+  existsSync,
+} from "node:fs";
+import { resolve, join, dirname } from "node:path";
 import chalk from "chalk";
 import { Command } from "commander";
 import { configureAuth, AuthError } from "./auth";
@@ -195,6 +201,10 @@ program
   .option("--run-id <id>", "Run identifier (default: random).")
   .option("--resume", "Resume an existing run-id.")
   .option(
+    "-d, --background",
+    "Run detached in the background; print the run-id and exit. Track with `audit sessions`.",
+  )
+  .option(
     "--base <ref>",
     "PR mode: scan only what this branch changed vs the merge-base with <ref> (git <ref>...HEAD).",
   )
@@ -263,6 +273,38 @@ program
 
     validateFailOn(opts.failOn);
     const repoPath = resolve(opts.repo);
+
+    // Background mode — re-launch this same `run` (minus -d/--background)
+    // detached, with stdout/stderr to a log file, then return. Auth and path
+    // checks above already ran in the foreground so misconfig fails fast.
+    if (opts.background) {
+      const runId = opts.runId || `run_${shortId()}`;
+      const passthrough = process.argv
+        .slice(2)
+        .filter((a) => a !== "-d" && a !== "--background");
+      if (!passthrough.includes("--run-id")) passthrough.push("--run-id", runId);
+
+      const logPath = join(RESULTS, runId, "run.log");
+      mkdirSync(dirname(logPath), { recursive: true });
+      const fd = openSync(logPath, "a");
+      const child = Bun.spawn([process.execPath, process.argv[1], ...passthrough], {
+        cwd: process.cwd(),
+        env: process.env,
+        stdin: "ignore",
+        stdout: fd,
+        stderr: fd,
+      });
+      child.unref(); // let it outlive this process
+
+      const db = new StateDB(DB_PATH);
+      db.recordSession(runId, child.pid, logPath, passthrough.join(" "));
+      db.close();
+
+      log.success(`background run started: ${runId} (pid ${child.pid})`);
+      log.info(`logs: ${logPath}`);
+      log.info(`track: audit sessions  ·  follow: tail -f ${logPath}`);
+      return;
+    }
 
     // Diff/PR mode — constrain Recon's input to the changed-file set.
     let changed: string[] | null = null;
@@ -402,6 +444,46 @@ program
     }
   });
 
+// ---------------- sessions ----------------
+
+program
+  .command("sessions")
+  .alias("ps")
+  .description("List active (running) run sessions, including background runs.")
+  .option("--json", "Emit the session list as JSON.")
+  .action((opts) => {
+    const db = new StateDB(DB_PATH);
+    try {
+      db.pruneFinishedSessions();
+      const sessions = db.runningRuns().map((r) => {
+        const s = db.getSession(r.run_id);
+        const pid = s?.pid ?? null;
+        return {
+          run_id: r.run_id,
+          repo_path: r.repo_path,
+          mode: s ? "background" : "foreground",
+          pid,
+          alive: pid === null ? null : isAlive(pid),
+          started_at: r.started_at,
+          cost_usd: db.totalCost(r.run_id),
+          log_path: s?.log_path ?? null,
+        };
+      });
+
+      if (opts.json) {
+        process.stdout.write(`${JSON.stringify(sessions, null, 2)}\n`);
+        return;
+      }
+      if (sessions.length === 0) {
+        log.info("no active run sessions");
+        return;
+      }
+      renderSessions(sessions);
+    } finally {
+      db.close();
+    }
+  });
+
 // ---------------- report ----------------
 
 program
@@ -430,9 +512,13 @@ program
     "Port for --serve (default 7878).",
     (v) => Number.parseInt(v, 10),
   )
+  .option(
+    "--host <host>",
+    "Bind host for --serve (default 127.0.0.1; use 0.0.0.0 to expose on the network).",
+  )
   .action((opts) => {
     if (opts.serve) {
-      serveTriage(opts.runId, opts.port);
+      serveTriage(opts.runId, { port: opts.port, host: opts.host });
       return;
     }
     if (!["json", "md", "sarif"].includes(opts.format)) {
@@ -736,14 +822,17 @@ program
 
 // ---------------- shared: triage viewer ----------------
 
-function serveTriage(runId: string, port?: number): void {
+function serveTriage(
+  runId: string,
+  opts: { port?: number; host?: string } = {},
+): void {
   const db = new StateDB(DB_PATH);
   if (db.getRun(runId) === null) {
     log.error(`unknown run_id ${JSON.stringify(runId)}`);
     db.close();
     process.exit(1);
   }
-  const server = serveViewer(db, runId, { port });
+  const server = serveViewer(db, runId, { port: opts.port, host: opts.host });
   const shutdown = () => {
     server.stop();
     db.close();
@@ -890,6 +979,64 @@ function showRunDetail(db: StateDB, runId: string): void {
   print("findings (canonical)", canonical.length);
   print("findings (reachable)", reachable.length);
   log.print(row(["total cost ($)", db.totalCost(runId).toFixed(4)], widths));
+}
+
+/** Signal-0 liveness probe; EPERM means the process exists but isn't ours. */
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function ago(epochSeconds: number): string {
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - epochSeconds));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+interface SessionView {
+  run_id: string;
+  repo_path: string;
+  mode: string;
+  pid: number | null;
+  alive: boolean | null;
+  started_at: number;
+  cost_usd: number;
+  log_path: string | null;
+}
+
+function renderSessions(rows: SessionView[]): void {
+  log.print(chalk.bold("active run sessions"));
+  const widths = [22, 11, 9, 7, 10, 9];
+  log.print(
+    chalk.dim(
+      row(["run_id", "mode", "pid", "alive", "started", "cost ($)"], widths),
+    ),
+  );
+  for (const s of rows) {
+    // A background run whose pid is dead but whose run is still "running" has
+    // crashed — colour the whole row red so it stands out. (Per-cell colour
+    // would break padEnd alignment, since ANSI codes count toward length.)
+    const aliveText = s.alive === null ? "—" : s.alive ? "yes" : "dead";
+    const line = row(
+      [
+        s.run_id,
+        s.mode,
+        s.pid === null ? "—" : String(s.pid),
+        aliveText,
+        ago(s.started_at),
+        s.cost_usd.toFixed(4),
+      ],
+      widths,
+    );
+    log.print(s.alive === false ? chalk.red(line) : line);
+    if (s.log_path) log.print(chalk.dim(`    log: ${s.log_path}`));
+  }
 }
 
 function renderTriageVerdict(v: TriageVerdict): void {

@@ -11,6 +11,7 @@ Commands:
   auth-check [options]   Verify Claude auth is configured correctly
   run [options]          Run the full 8-stage pipeline against a target repo
   status [options]       Show pipeline status: tasks, findings, traces, cost
+  sessions [options]     List active (running) run sessions, incl. background
   report [options]       Print, convert, gate, or triage (--serve) the report
   baseline [options]     Generate a baseline file from a run's report
   fix [options]          Stage 9 (opt-in): patch confirmed + reachable findings
@@ -62,6 +63,7 @@ audit run --run-id my-run
 | `--repo <path>` | Path to the target source repo (default: current working directory) |
 | `--run-id <id>` | Run identifier (default: random `run_xxxxxxxx`) |
 | `--resume` | Resume an existing run-id (re-queues interrupted/failed work) |
+| `-d, --background` | Run detached in the background; print the run-id and exit. Logs to `results/<run-id>/run.log`; track with `audit sessions` |
 | `--base <ref>` | **PR mode** — scan only what this branch changed vs the merge-base with `<ref>` (git `<ref>...HEAD`) |
 | `--since <ref>` | **Incremental** — scan only files changed between `<ref>` and HEAD (git `<ref>..HEAD`) |
 | `--baseline <path>` | Suppress findings already in this baseline; print the NEW/FIXED/STILL-PRESENT delta and gate on NEW only |
@@ -139,6 +141,26 @@ Detail view shows task counts (total/pending/done/failed), finding counts
 
 ---
 
+## `sessions` (alias `ps`)
+
+Lists every run currently in progress — both foreground runs and detached
+background runs (`run -d`). Background rows show the driving process's PID and
+whether it is still **alive** (a `running` row whose PID is dead has crashed and
+is flagged in red). Finished runs are pruned from the session list.
+
+```bash
+audit run -d --max-cost-usd 30      # start a background run, returns immediately
+audit sessions                      # see what's active
+audit sessions --json               # machine-readable
+tail -f results/<run-id>/run.log    # follow a background run's output
+```
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Emit the session list as JSON |
+
+---
+
 ## `report`
 
 ```bash
@@ -157,6 +179,7 @@ audit report --run-id my-run --baseline .audit-baseline.json --fail-on high
 | `--out <path>` | Write the rendered report to a file instead of stdout |
 | `--serve` | Open the interactive triage viewer (local web UI) instead of printing |
 | `--port <n>` | Port for `--serve` (default `7878`) |
+| `--host <host>` | Bind host for `--serve` (default `127.0.0.1`; `0.0.0.0` exposes it on the network — no auth, warns) |
 
 Reads `results/<run-id>/report/report.json`. Exit `1` if no report exists yet,
 `4` if `--fail-on` trips. When the rendered payload streams to stdout
@@ -181,7 +204,8 @@ reachability / status, inspect the call chain, and mark each finding
 **confirm / false-positive / won't-fix** — verdicts persist to the `triage`
 table. "Export baseline (suppressed)" downloads a baseline of everything you
 marked false-positive or won't-fix, so those stop alerting on the next run.
-Binds to `127.0.0.1` only; Ctrl-C to stop.
+Binds to `127.0.0.1` by default (Ctrl-C to stop); `--host 0.0.0.0` exposes it on
+the network — there is no authentication, so the viewer warns when you do.
 
 ---
 
