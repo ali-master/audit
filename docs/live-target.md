@@ -6,7 +6,8 @@ analysis. This is **opt-in** — without `--target-url`, the pipeline is fully
 static.
 
 ```bash
-bun run src/cli.ts run --repo /path/to/target --run-id live \
+cd /path/to/target
+audit run --run-id live \
   --max-concurrency 1 --max-cost-usd 30 \
   --target-url http://server.local:8888 \
   --target-creds email=admin@system.com \

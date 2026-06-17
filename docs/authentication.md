@@ -8,7 +8,7 @@ path you actually intend.
 Verify any time with:
 
 ```bash
-bun run src/cli.ts auth-check
+audit auth-check
 ```
 
 ## Modes (in priority order)
@@ -39,7 +39,7 @@ subscription auth wins. Opt back in explicitly with `--allow-api-key`.
 
 ```bash
 claude login           # once
-bun run src/cli.ts auth-check   # → "using macOS Keychain-backed Claude Code login" (or keychain_login)
+audit auth-check   # → "using macOS Keychain-backed Claude Code login" (or keychain_login)
 ```
 
 ### Subscription (CI / headless)
@@ -47,7 +47,7 @@ bun run src/cli.ts auth-check   # → "using macOS Keychain-backed Claude Code l
 ```bash
 claude setup-token
 echo "CLAUDE_CODE_OAUTH_TOKEN=<paste>" > .env
-bun run src/cli.ts auth-check   # → "using CLAUDE_CODE_OAUTH_TOKEN"
+audit auth-check   # → "using CLAUDE_CODE_OAUTH_TOKEN"
 ```
 
 ### OpenRouter (or any Anthropic-compatible gateway)
@@ -58,7 +58,7 @@ export ANTHROPIC_AUTH_TOKEN="$OPENROUTER_API_KEY"
 export ANTHROPIC_API_KEY=""           # must be empty / unset
 export ANTHROPIC_MODEL="anthropic/claude-sonnet-4-6"   # optional, forces all stages
 
-bun run src/cli.ts auth-check         # → "using LLM gateway at https://openrouter.ai/api"
+audit auth-check         # → "using LLM gateway at https://openrouter.ai/api"
 ```
 
 Per-stage model names in `config/stages.yaml` can be slash-prefixed
@@ -69,7 +69,7 @@ schema-compliant JSON less reliably; the repair turn still applies.
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
-bun run src/cli.ts run --repo ./target --allow-api-key
+audit run --repo ./target --allow-api-key
 ```
 
 ### Cloud providers (Bedrock / Vertex / Foundry)

@@ -36,7 +36,7 @@ lines show exactly what was emitted and which fields were wrong.
 You hit `--max-cost-usd`. The run is left resumable:
 
 ```bash
-bun run src/cli.ts run --repo … --run-id <same-id> --resume --max-cost-usd <higher>
+audit run --run-id <same-id> --resume --max-cost-usd <higher>
 ```
 
 ## "subscription quota exhausted"
@@ -45,7 +45,7 @@ Your Claude session/usage limit was hit. The in-flight task is left `pending`,
 the run is marked `aborted`, and it's fully resumable once your quota resets:
 
 ```bash
-bun run src/cli.ts run --repo … --run-id <same-id> --resume
+audit run --run-id <same-id> --resume
 ```
 
 ## It's taking a long time / costing a lot
@@ -65,8 +65,10 @@ To skip the expansion loops entirely, pass a `--config` whose `loops:` sets
 
 ## "Cannot find module 'bun:sqlite'" / `Bun is not defined`
 
-You're running under Node. This is a **Bun** application — use
-`bun run src/cli.ts …` (or `bun test`, `bun run build`), not `node`.
+You're running under Node. This is a **Bun** application. The global `audit`
+binary already runs under Bun via its shebang, so make sure Bun is installed
+(`bun --version`). From a source clone, invoke it as `bun run src/cli.ts …` (or
+`bun test`, `bun run build`), never `node`.
 
 ## Transient API errors (529 / overloaded / 5xx)
 

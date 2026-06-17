@@ -6,7 +6,8 @@ ingest. Put them in a text file and pass it in; the notes are appended verbatim
 to **every** stage's input, and Recon / Hunt / Validate honor the exclusions.
 
 ```bash
-bun run src/cli.ts run --repo /path/to/target --scope-notes target_scope.md
+cd /path/to/target
+audit run --scope-notes target_scope.md
 ```
 
 ## Example `target_scope.md`
