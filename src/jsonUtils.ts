@@ -9,9 +9,7 @@
 
 import Ajv from "ajv";
 import type { ValidateFunction } from "ajv";
-import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
-import { SCHEMAS } from "./paths";
+import { schemaList } from "./assets";
 
 const FENCE_RE = /```(?:json)?\s*(\{[\s\S]*?\}|\[[\s\S]*?\])\s*```/;
 
@@ -104,13 +102,12 @@ let ajv: Ajv | null = null;
 function getAjv(): Ajv {
   if (ajv) return ajv;
   const instance = new Ajv({ allErrors: true, strict: false });
-  for (const f of readdirSync(SCHEMAS)) {
-    if (!f.endsWith(".schema.json")) continue;
-    const schema = JSON.parse(readFileSync(join(SCHEMAS, f), "utf8"));
+  for (const { name, text } of schemaList()) {
+    const schema = JSON.parse(text);
     // Give each schema an $id equal to its filename so that cross-file
     // `$ref: "hunt_task.schema.json"` entries resolve by id.
-    schema.$id = f;
-    instance.addSchema(schema, f);
+    schema.$id = name;
+    instance.addSchema(schema, name);
   }
   ajv = instance;
   return instance;

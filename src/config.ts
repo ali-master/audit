@@ -5,10 +5,8 @@
  * verbatim.
  */
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { CONFIG_DIR } from "./paths";
+import { configText } from "./assets";
 
 export type PermissionMode =
   | "default"
@@ -62,8 +60,7 @@ interface RawStage {
 }
 
 export function loadConfig(path?: string): HarnessConfig {
-  const file = path ?? join(CONFIG_DIR, "stages.yaml");
-  const raw = parseYaml(readFileSync(file, "utf8")) as {
+  const raw = parseYaml(configText(path)) as {
     defaults?: Record<string, unknown>;
     stages?: Record<string, RawStage>;
     loops?: Record<string, unknown>;

@@ -14,10 +14,12 @@ import {
 import { resolve, join, dirname } from "node:path";
 import chalk from "chalk";
 import { Command } from "commander";
+import { assetInventory } from "./assets";
 import { configureAuth, AuthError } from "./auth";
 import { parseBaseline, buildBaseline, applyBaseline } from "./baseline";
 import type { Delta } from "./baseline";
 import { loadConfig } from "./config";
+import { validateSchema } from "./jsonUtils";
 import { isGitRepo, changedFiles } from "./diff";
 import { setVerbose, log } from "./logger";
 import { runPipeline, CostExceeded } from "./orchestrator";
@@ -187,6 +189,61 @@ program
     log.print(
       `claude CLI: ${status.claudeCliPath ?? "(bundled by SDK)"} (${status.claudeCliVersion ?? "n/a"})`,
     );
+  });
+
+// ---------------- doctor ----------------
+
+program
+  .command("doctor")
+  .description(
+    "Check the install: runtime, version, and that prompts/schemas/config load (no auth needed).",
+  )
+  .action(() => {
+    const inv = assetInventory();
+    log.print(`${chalk.bold("audit")} ${pkg.version}`);
+    log.print(
+      `runtime: Bun ${Bun.version}  ·  ${process.platform}/${process.arch}`,
+    );
+    log.print(
+      `assets (${inv.source}): ${inv.prompts} prompts, ${inv.schemas} schemas, ` +
+        `config ${inv.config ? chalk.green("ok") : chalk.red("MISSING")}`,
+    );
+
+    let ok = inv.config && inv.prompts > 0 && inv.schemas > 0;
+    try {
+      const cfg = loadConfig();
+      cfg.get("hunt");
+      log.print(`config: parsed (${Object.keys(cfg.stages).length} stages)`);
+    } catch (e) {
+      ok = false;
+      log.error(`config load failed: ${(e as Error).message}`);
+    }
+    try {
+      // Forces Ajv to load every schema (cross-$ref included) from the same
+      // source a real run uses — the strongest "assets are intact" check.
+      const errs = validateSchema(
+        {
+          run_id: "x",
+          target: { repo_path: "/" },
+          summary: { total: 0, by_severity: {} },
+          findings: [],
+        },
+        "report.schema.json",
+      );
+      log.print(
+        `schemas: Ajv loaded (sample report ${errs.length === 0 ? chalk.green("valid") : chalk.red("invalid")})`,
+      );
+      if (errs.length) ok = false;
+    } catch (e) {
+      ok = false;
+      log.error(`schema load failed: ${(e as Error).message}`);
+    }
+
+    if (ok) log.success("doctor: ok");
+    else {
+      log.error("doctor: problems detected");
+      process.exit(1);
+    }
   });
 
 // ---------------- run ----------------

@@ -18,6 +18,9 @@ export default antfu({
   typescript: true,
   name: "audit",
   gitignore: true,
+  // Generated asset snapshot (scripts/embed-assets.ts) — a data module, not
+  // hand-written source.
+  ignores: ["src/generated-assets.ts"],
 }).append({
   ignores: ["README.md"],
   files: ["./src/**/*.ts"],

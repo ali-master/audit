@@ -187,3 +187,6 @@ results/
 
 # Local plans / notes
 plans/
+
+# compiled standalone binaries
+dist-bin/

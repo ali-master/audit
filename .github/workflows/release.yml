@@ -1,0 +1,76 @@
+name: release
+
+# Build standalone binaries and publish them (plus a Homebrew formula) when a
+# version tag is pushed.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (e.g. 1.5.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      # Sanity-gate the release.
+      - run: bun run test:types
+      - run: bun test
+
+      # Cross-compile every target from one host (Bun fetches each runtime).
+      - name: Build standalone binaries
+        run: bun run build:binary:all
+
+      # Resolve the version via env (never interpolate untrusted input into run).
+      - name: Resolve version
+        id: ver
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          version="${INPUT_VERSION:-${REF_NAME#v}}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Generate Homebrew formula
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: bun run scripts/gen-formula.ts "$VERSION"
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist-bin/*.tar.gz
+            dist-bin/*.tar.gz.sha256
+          fail_on_unmatched_files: true
+
+      # Commit the regenerated formula back to main so the repo (usable as a
+      # Homebrew tap) serves the new version.
+      - name: Commit updated formula
+        if: github.event_name == 'push'
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout -B main origin/main
+          cp Formula/audit.rb /tmp/audit.rb
+          git checkout -- Formula/audit.rb 2>/dev/null || true
+          cp /tmp/audit.rb Formula/audit.rb
+          git add Formula/audit.rb
+          git commit -m "chore(release): Homebrew formula for v${VERSION}" || echo "no change"
+          git push origin main || echo "push skipped"

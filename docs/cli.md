@@ -9,6 +9,7 @@ audit [options] [command]
 
 Commands:
   auth-check [options]   Verify Claude auth is configured correctly
+  doctor                 Check the install: runtime, version, embedded assets
   run [options]          Run the full 8-stage pipeline against a target repo
   status [options]       Show pipeline status: tasks, findings, traces, cost
   sessions [options]     List active (running) run sessions, incl. background
@@ -45,6 +46,31 @@ audit auth-check
 | `--allow-api-key` | Honor `ANTHROPIC_API_KEY` for metered billing (or set `AUDIT_ALLOW_API_KEY=1`) |
 
 Exit code `2` if no usable auth is available. See [Authentication](authentication.md).
+
+---
+
+## `doctor`
+
+Verifies the install without needing auth or a network: prints the version and
+runtime, and confirms the prompts, schemas, and config all load (from disk in a
+source/npm install, or from the embedded snapshot in the Homebrew binary) — then
+exercises the config parser and the schema validator the way a real run does.
+
+```bash
+audit doctor
+```
+
+```
+audit 1.5.0
+runtime: Bun 1.3.14  ·  darwin/arm64
+assets (embedded): 11 prompts, 12 schemas, config ok
+config: parsed (11 stages)
+schemas: Ajv loaded (sample report valid)
+✔ doctor: ok
+```
+
+Exit `1` if any asset is missing or fails to load — a quick smoke test after
+`brew install`.
 
 ---
 
@@ -364,3 +390,18 @@ bun link                          # or expose the `audit` binary locally
 ```
 
 Every `audit <command>` above maps to `bun run src/cli.ts <command>`.
+
+### Building the standalone binary
+
+The Homebrew artifact is a single `bun build --compile` executable with the Bun
+runtime and all prompts/schemas/config embedded (via `scripts/embed-assets.ts`).
+
+```bash
+bun run build:binary           # current platform → dist-bin/<target>/audit
+bun run build:binary:all       # all release targets + tarballs + .sha256
+bun run scripts/gen-formula.ts # regenerate Formula/audit.rb from the checksums
+```
+
+On a version tag, `.github/workflows/release.yml` builds every target, attaches
+the tarballs to the GitHub release, and updates the Homebrew formula. Run
+`audit doctor` to confirm a built binary packaged its assets correctly.

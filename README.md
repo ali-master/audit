@@ -58,10 +58,30 @@ Recon → Hunt → Validate → Gapfill ↺ → Dedupe → Trace → Feedback �
 
 Full details in **[docs/stages.md](docs/stages.md)**.
 
+## Install
+
+**Homebrew** (standalone binary — no Bun or npm required):
+
+```bash
+brew install ali-master/audit/audit   # tap + formula
+audit doctor                           # verify the install
+```
+
+**npm / Bun** (requires Bun ≥ 1.3 on `PATH`):
+
+```bash
+bun add -g @usex/audit
+```
+
+Both expose an `audit` binary on your `PATH`. The Homebrew build is a single
+self-contained executable (the Bun runtime and all prompts/schemas are embedded),
+so it has no runtime dependencies; agent-running commands still need the Claude
+Code CLI for subscription auth (see [authentication](docs/authentication.md)).
+
 ## Quickstart
 
 ```bash
-# 1. Install globally — requires Bun ≥ 1.3 (https://bun.sh)
+# 1. Install (Homebrew above, or globally via Bun)
 bun add -g @usex/audit
 
 # 2. Auth — already logged in via `claude login`? You're done.

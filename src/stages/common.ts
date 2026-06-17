@@ -2,10 +2,11 @@
  * Shared helpers for stage modules.
  */
 
-import { readFileSync, mkdirSync, existsSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { resolve, join } from "node:path";
+import { schemaText, promptPath } from "../assets";
 import type { StageConfig, HarnessConfig } from "../config";
-import { WORK, SCHEMAS, RESULTS, PROMPTS } from "../paths";
+import { WORK, RESULTS } from "../paths";
 
 type Json = any;
 
@@ -45,18 +46,16 @@ export class StageContext {
     return out;
   }
 
+  /** Path to a prompt file (on disk in dev; materialized from the embedded
+   * snapshot in a compiled binary). The runner reads the prompt by path. */
   promptFile(name: string): string {
-    const path = join(PROMPTS, `${name}.md`);
-    if (!existsSync(path)) throw new Error(`Missing prompt: ${path}`);
-    return path;
+    return promptPath(name);
   }
 
   /** Returns the schema filename (Ajv key) and its raw text for the runner. */
   schema(name: string): { name: string; text: string } {
     const filename = `${name}.schema.json`;
-    const path = join(SCHEMAS, filename);
-    if (!existsSync(path)) throw new Error(`Missing schema: ${path}`);
-    return { name: filename, text: readFileSync(path, "utf8") };
+    return { name: filename, text: schemaText(filename) };
   }
 
   resultsDir(stage: string): string {
