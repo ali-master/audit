@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/logo.svg" alt="audit" width="128" height="128" />
+  <img src="assets/logo.svg" alt="@usex/audit" width="128" height="128" />
   <h1>audit</h1>
   <p><strong>An 8-stage AI vulnerability-discovery agent.</strong><br/>
   Many narrow agents · deliberate disagreement · reachability as the gate.</p>
@@ -181,3 +181,11 @@ systems you're authorized to test.
 The pipeline design is from Cloudflare's
 [Project Glasswing](https://blog.cloudflare.com/cyber-frontier-models/). Built on
 the official [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview).
+
+---
+
+<div align="center">
+
+Made with ❤️ by [Ali Torki](https://github.com/ali-master)
+
+</div>
