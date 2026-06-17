@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FixOutput",
+  "description": "One auto-fix attempt for a single confirmed + reachable finding. The agent edits code inside an isolated git worktree; the harness derives the patch from `git diff`, so this output is metadata describing the change, not the diff itself.",
+  "type": "object",
+  "required": ["finding_id", "fixed", "summary", "root_cause", "confidence"],
+  "additionalProperties": false,
+  "properties": {
+    "finding_id": { "type": "string" },
+    "fixed": {
+      "type": "boolean",
+      "description": "True if you edited the code to remediate the bug. False if you could not produce a safe fix (explain in `caveats`)."
+    },
+    "summary": { "type": "string", "minLength": 5, "description": "One line: what the patch does." },
+    "root_cause": { "type": "string", "minLength": 10, "description": "Why the bug exists — the property the fix restores." },
+    "fix_approach": { "type": "string", "description": "How the fix works and why it is minimal and behavior-preserving." },
+    "files_changed": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Repo-relative paths you edited (informational; the real diff is captured from git)."
+    },
+    "regression_test": {
+      "type": "object",
+      "description": "A test you added that fails on the vulnerable code and passes after the fix.",
+      "required": ["path", "proves"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "description": "Repo-relative path of the test file you created/extended." },
+        "framework": { "type": "string", "description": "Test framework / runner (e.g. bun:test, pytest, go test)." },
+        "run_command": { "type": "string", "description": "Command a maintainer runs to execute just this test." },
+        "proves": { "type": "string", "description": "How the test demonstrates the vulnerability is closed." }
+      }
+    },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "caveats": { "type": "string", "description": "Risks, assumptions, or why no fix was produced." }
+  }
+}

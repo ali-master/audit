@@ -15,6 +15,7 @@ export {
   BASELINE_VERSION,
   type BaselineEntry,
   type BaselineFile,
+  baselineFromFindings,
   buildBaseline,
   type Delta,
   fingerprintFinding,

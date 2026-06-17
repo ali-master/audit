@@ -11,8 +11,10 @@ Commands:
   auth-check [options]   Verify Claude auth is configured correctly
   run [options]          Run the full 8-stage pipeline against a target repo
   status [options]       Show pipeline status: tasks, findings, traces, cost
-  report [options]       Print, convert, or gate the final report
+  report [options]       Print, convert, gate, or triage (--serve) the report
   baseline [options]     Generate a baseline file from a run's report
+  fix [options]          Stage 9 (opt-in): patch confirmed + reachable findings
+  stats [options]        Cost & token breakdown by stage/model, cost-per-finding
 ```
 
 > **Running from source instead?** Swap `audit` for `bun run src/cli.ts` in any
@@ -152,6 +154,8 @@ audit report --run-id my-run --baseline .audit-baseline.json --fail-on high
 | `--baseline <path>` | Suppress findings in this baseline; show NEW/FIXED/STILL-PRESENT |
 | `--fail-on <severity>` | Exit `4` if any (shown) finding is at or above this severity |
 | `--out <path>` | Write the rendered report to a file instead of stdout |
+| `--serve` | Open the interactive triage viewer (local web UI) instead of printing |
+| `--port <n>` | Port for `--serve` (default `7878`) |
 
 Reads `results/<run-id>/report/report.json`. Exit `1` if no report exists yet,
 `4` if `--fail-on` trips. When the rendered payload streams to stdout
@@ -163,6 +167,20 @@ stays pipe-clean.
 reachability trace, each result carries a `codeFlows` entry built from the Trace
 stage's `call_chain` — reviewers see the entry-point→sink path, not just the
 sink — plus a `partialFingerprints` value so GitHub dedupes across line shifts.
+
+### Triage viewer (`--serve`)
+
+```bash
+audit report --run-id my-run --serve              # → http://127.0.0.1:7878
+audit report --run-id my-run --serve --port 9000
+```
+
+A local, zero-build web UI reading straight from SQLite. Filter by severity /
+reachability / status, inspect the call chain, and mark each finding
+**confirm / false-positive / won't-fix** — verdicts persist to the `triage`
+table. "Export baseline (suppressed)" downloads a baseline of everything you
+marked false-positive or won't-fix, so those stop alerting on the next run.
+Binds to `127.0.0.1` only; Ctrl-C to stop.
 
 ---
 
@@ -180,6 +198,56 @@ audit baseline --run-id my-run --out security/base.json
 |------|-------------|
 | `--run-id <id>` | **Required.** Run whose report seeds the baseline |
 | `--out <path>` | Where to write the baseline (default `.audit-baseline.json`) |
+
+---
+
+## `fix` (Stage 9, opt-in)
+
+Generates a **minimal patch + regression test** for each confirmed *and
+reachable* finding. The reachability gate is what makes this trustworthy — only
+bugs proven exploitable get patched. Each fix is produced by an agent editing
+inside a throwaway **git worktree** at HEAD, so your working tree is never
+touched; the patch is captured with `git diff` and saved to
+`results/<run-id>/fix/`. Requires a git repo and auth.
+
+```bash
+audit fix --run-id my-run                       # generate patches only (review them)
+audit fix --run-id my-run --apply               # + apply to branch audit/fix-<run-id>
+audit fix --run-id my-run --open-pr             # + push and open a DRAFT PR via gh
+```
+
+| Flag | Description |
+|------|-------------|
+| `--run-id <id>` | **Required.** Run whose reachable findings to patch |
+| `--repo <path>` | Target repo (default: current directory) |
+| `--apply` | Apply patches to a new branch (requires a clean working tree) |
+| `--open-pr` | Apply, push, and open a **draft** PR via `gh`. Implies `--apply` |
+| `--branch <name>` | Branch for `--apply`/`--open-pr` (default `audit/fix-<run-id>`) |
+| `--config <path>` | Override `config/stages.yaml` |
+| `--allow-api-key` | Honor `ANTHROPIC_API_KEY` for metered billing |
+
+**Human-in-the-loop by design:** patches are never auto-applied without
+`--apply`, `--open-pr` opens a **draft** PR and never merges, and `--apply`
+refuses to run on a dirty working tree. Review every hunk.
+
+---
+
+## `stats`
+
+Where the budget actually went — per-stage and per-model spend, token usage,
+prompt-cache hit ratio, and cost-per-confirmed / cost-per-reachable finding.
+Use it to tune `config/stages.yaml` concurrency and model choices with data.
+
+```bash
+audit stats --run-id my-run
+audit stats --run-id my-run --json     # machine-readable
+```
+
+| Flag | Description |
+|------|-------------|
+| `--run-id <id>` | **Required.** Which run to break down |
+| `--config <path>` | Override `config/stages.yaml` (for the stage→model mapping) |
+| `--json` | Emit the raw stats object as JSON |
 
 ---
 

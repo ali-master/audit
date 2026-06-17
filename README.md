@@ -158,6 +158,9 @@ entry-point→sink path, not just the sink. See the [CLI reference](docs/cli.md)
 - ✅ **Diff / PR mode** — `--base`/`--since` scope the scan to changed files + blast radius.
 - ✅ **Baseline & delta** — fingerprint findings, suppress known ones, surface NEW/FIXED.
 - ✅ **SARIF + exit-code gating** — `--format sarif` and `--fail-on high` for CI / the GitHub Security tab.
+- ✅ **Auto-fix (opt-in)** — `audit fix` writes a minimal patch + regression test per reachable finding in an isolated worktree; `--open-pr` opens a draft PR (never auto-merges).
+- ✅ **Triage viewer** — `audit report --serve` is a local web UI to confirm / dismiss findings and export suppressions to a baseline.
+- ✅ **Cost observability** — `audit stats` breaks spend down by stage/model and reports cost-per-finding.
 - ✅ Git-history mining — seeds hunts against unpatched siblings of past fixes.
 - ✅ Resumable runs, per-stage concurrency, and a hard cost ceiling.
 

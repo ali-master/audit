@@ -153,12 +153,18 @@ class Spinner {
     // unbounded segment) guarantees a single-row line that redraws cleanly.
     const frame = SPINNER_FRAMES[this.frame];
     const time = rawTime();
-    const counterText = this.total !== null ? ` ${this.done}/${this.total}` : "";
+    const counterText =
+      this.total !== null ? ` ${this.done}/${this.total}` : "";
     const elapsedText = ` · ${this.elapsed()}`;
 
     // Fixed width: "<time> <frame> <title><counter>" + " <detail>" + "<elapsed>".
     const fixed =
-      time.length + 1 + frame.length + 1 + this.title.length + counterText.length;
+      time.length +
+      1 +
+      frame.length +
+      1 +
+      this.title.length +
+      counterText.length;
     const budget = columns() - fixed - elapsedText.length - 1; // -1: space before detail
 
     let detail = this.detail;
@@ -250,6 +256,14 @@ export interface StageHandle {
 }
 
 export const log = {
+  /**
+   * Emit a raw line to stdout with no timestamp/glyph/decoration, cooperating
+   * with any active live line. For tabular and machine-facing output (tables,
+   * stats, the rendered report) that should not carry log chrome.
+   */
+  print(msg = ""): void {
+    emit(process.stdout, msg);
+  },
   info(msg: string): void {
     emit(process.stdout, `${stamp()} ${c.info(glyph.info)} ${decorate(msg)}`);
   },

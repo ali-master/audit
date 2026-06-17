@@ -98,11 +98,21 @@ const SCHEMA_STATEMENTS = [
     path TEXT NOT NULL,
     created_at REAL NOT NULL
   )`,
+  // Human triage verdicts from the interactive viewer. One row per finding;
+  // additive CREATE-IF-NOT-EXISTS migrates existing DBs on next open.
+  `CREATE TABLE IF NOT EXISTS triage (
+    finding_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    note TEXT,
+    updated_at REAL NOT NULL
+  )`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_run_status ON tasks(run_id, status)`,
   `CREATE INDEX IF NOT EXISTS idx_findings_run ON findings(run_id)`,
   `CREATE INDEX IF NOT EXISTS idx_findings_validation ON findings(validation_status)`,
   `CREATE INDEX IF NOT EXISTS idx_findings_group ON findings(group_id)`,
   `CREATE INDEX IF NOT EXISTS idx_costs_run_stage ON costs(run_id, stage)`,
+  `CREATE INDEX IF NOT EXISTS idx_triage_run ON triage(run_id)`,
 ];
 
 type Json = any;
@@ -146,6 +156,23 @@ export interface Finding {
   validationJson: Json | null;
   groupId: string | null;
   isCanonical: boolean;
+}
+
+export interface StageCostRow {
+  stage: string;
+  calls: number;
+  usd: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  num_turns: number;
+  duration_ms: number;
+}
+
+export interface TriageRow {
+  status: string;
+  note: string | null;
 }
 
 export interface ResultUsage {
@@ -464,6 +491,61 @@ export class StateDB {
       )
       .get(runId) as { total: number } | undefined;
     return row ? Number(row.total) : 0;
+  }
+
+  /** Per-stage cost + token rollup, most expensive first. Powers `audit stats`. */
+  costByStage(runId: string): StageCostRow[] {
+    return this.db
+      .query(
+        `SELECT stage,
+                COUNT(*)                            AS calls,
+                COALESCE(SUM(usd), 0)               AS usd,
+                COALESCE(SUM(input_tokens), 0)      AS input_tokens,
+                COALESCE(SUM(output_tokens), 0)     AS output_tokens,
+                COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+                COALESCE(SUM(num_turns), 0)         AS num_turns,
+                COALESCE(SUM(duration_ms), 0)       AS duration_ms
+         FROM costs WHERE run_id = ?
+         GROUP BY stage
+         ORDER BY usd DESC, calls DESC`,
+      )
+      .all(runId) as StageCostRow[];
+  }
+
+  // ---------- triage ----------
+
+  /** Upsert a human triage verdict (confirmed | false_positive | wont_fix | new). */
+  setTriage(
+    runId: string,
+    findingId: string,
+    status: string,
+    note: string | null = null,
+  ): void {
+    this.db.run(
+      `INSERT INTO triage (finding_id, run_id, status, note, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(finding_id) DO UPDATE SET
+         status = excluded.status,
+         note = excluded.note,
+         updated_at = excluded.updated_at`,
+      [findingId, runId, status, note, now()],
+    );
+  }
+
+  /** Map of finding_id → triage verdict for a run. */
+  getTriage(runId: string): Record<string, TriageRow> {
+    const rows = this.db
+      .query("SELECT finding_id, status, note FROM triage WHERE run_id = ?")
+      .all(runId) as Array<{
+      finding_id: string;
+      status: string;
+      note: string | null;
+    }>;
+    const out: Record<string, TriageRow> = {};
+    for (const r of rows)
+      out[r.finding_id] = { status: r.status, note: r.note };
+    return out;
   }
 
   // ---------- artifacts ----------

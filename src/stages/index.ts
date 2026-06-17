@@ -6,6 +6,7 @@
 export { type LiveTarget, StageContext } from "./common";
 export { runDedupe } from "./dedupe";
 export { runFeedback } from "./feedback";
+export { type FixSummary, runFix } from "./fix";
 export { runGapfill } from "./gapfill";
 export { type BudgetCheck, runHunt } from "./hunt";
 export { runRecon } from "./recon";

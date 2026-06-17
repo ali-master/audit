@@ -95,6 +95,38 @@ export function buildBaseline(report: Json): BaselineFile {
   return { version: BASELINE_VERSION, run_id: report?.run_id, fingerprints };
 }
 
+/**
+ * Build a baseline from an arbitrary list of findings (the triage viewer uses
+ * this to turn FP / won't-fix verdicts into suppressions). Accepts the report
+ * shape or the DB `Finding` shape (`vulnClass`/`evidence`).
+ */
+export function baselineFromFindings(
+  findings: Json[],
+  repoPath?: string,
+  runId?: string,
+): BaselineFile {
+  const seen = new Set<string>();
+  const fingerprints: BaselineEntry[] = [];
+  for (const f of findings) {
+    const norm = {
+      vuln_class: f.vuln_class ?? f.vulnClass,
+      file: f.file,
+      evidence: f.evidence ?? f.evidence_snippet,
+    };
+    const fp = fingerprintFinding(norm, repoPath);
+    if (seen.has(fp)) continue;
+    seen.add(fp);
+    fingerprints.push({
+      fingerprint: fp,
+      finding_id: f.finding_id ?? f.findingId,
+      vuln_class: norm.vuln_class,
+      file: normalizeRepoPath(String(norm.file ?? ""), repoPath),
+      severity: f.severity,
+    });
+  }
+  return { version: BASELINE_VERSION, run_id: runId, fingerprints };
+}
+
 /** Parse + sanity-check a baseline file's JSON payload. */
 export function parseBaseline(raw: string): BaselineFile {
   const data = JSON.parse(raw) as Json;

@@ -17,7 +17,11 @@ import { setVerbose, log } from "./logger";
 import { runPipeline, CostExceeded } from "./orchestrator";
 import { RESULTS, DB_PATH } from "./paths";
 import { toSarif } from "./sarif";
+import { StageContext, runFix } from "./stages";
+import {  computeStats } from "./stats";
+import type {Stats} from "./stats";
 import { StateDB } from "./state";
+import { serveViewer } from "./viewer";
 import updateNotifier from "update-notifier";
 import pkg from "../package.json";
 
@@ -130,55 +134,42 @@ program
       status = configureAuth({ allowApiKey: allow });
     } catch (e) {
       if (e instanceof AuthError) {
-        console.error(chalk.red("auth error:"), e.message);
+        log.error(`auth error: ${e.message}`);
         process.exit(2);
       }
       throw e;
     }
+    const ok = chalk.green("OK");
     switch (status.authMode) {
       case "oauth_token":
-        console.log(chalk.green("OK"), "using CLAUDE_CODE_OAUTH_TOKEN");
+        log.print(`${ok} using CLAUDE_CODE_OAUTH_TOKEN`);
         break;
       case "api_key":
-        console.log(
-          chalk.green("OK"),
-          "using ANTHROPIC_API_KEY (metered Anthropic API billing)",
-        );
+        log.print(`${ok} using ANTHROPIC_API_KEY (metered Anthropic API billing)`);
         break;
       case "keychain_login":
-        console.log(
-          chalk.green("OK"),
-          `using stored login from ${status.credentialsFile}`,
-        );
+        log.print(`${ok} using stored login from ${status.credentialsFile}`);
         break;
       case "macos_keychain_login":
-        console.log(
-          chalk.green("OK"),
-          "using macOS Keychain-backed Claude Code login",
-        );
+        log.print(`${ok} using macOS Keychain-backed Claude Code login`);
         break;
       case "gateway":
-        console.log(
-          chalk.green("OK"),
-          `using LLM gateway at ${status.gatewayBaseUrl} (ANTHROPIC_AUTH_TOKEN)`,
+        log.print(
+          `${ok} using LLM gateway at ${status.gatewayBaseUrl} (ANTHROPIC_AUTH_TOKEN)`,
         );
         if (status.gatewayModel)
-          console.log(`          ANTHROPIC_MODEL=${status.gatewayModel}`);
+          log.print(`          ANTHROPIC_MODEL=${status.gatewayModel}`);
         break;
     }
-    if (status.apiKeyScrubbed) {
-      console.log(
-        chalk.yellow("scrubbed"),
-        "ANTHROPIC_API_KEY removed from env (it would have outranked the active auth mode)",
+    if (status.apiKeyScrubbed)
+      log.print(
+        `${chalk.yellow("scrubbed")} ANTHROPIC_API_KEY removed from env (it would have outranked the active auth mode)`,
       );
-    }
-    if (status.authTokenScrubbed) {
-      console.log(
-        chalk.yellow("scrubbed"),
-        "ANTHROPIC_AUTH_TOKEN removed from env (no gateway base URL set — leaving it would outrank subscription)",
+    if (status.authTokenScrubbed)
+      log.print(
+        `${chalk.yellow("scrubbed")} ANTHROPIC_AUTH_TOKEN removed from env (no gateway base URL set — leaving it would outrank subscription)`,
       );
-    }
-    console.log(
+    log.print(
       `claude CLI: ${status.claudeCliPath ?? "(bundled by SDK)"} (${status.claudeCliVersion ?? "n/a"})`,
     );
   });
@@ -256,14 +247,14 @@ program
       configureAuth({ allowApiKey: allow });
     } catch (e) {
       if (e instanceof AuthError) {
-        console.error(chalk.red("auth error:"), e.message);
+        log.error(`auth error: ${e.message}`);
         process.exit(2);
       }
       throw e;
     }
 
     if (!existsSync(opts.repo)) {
-      console.error(chalk.red(`--repo path does not exist: ${opts.repo}`));
+      log.error(`--repo path does not exist: ${opts.repo}`);
       process.exit(2);
     }
 
@@ -312,10 +303,8 @@ program
       const creds: Record<string, string> = {};
       for (const kv of opts.targetCreds as string[]) {
         if (!kv.includes("=")) {
-          console.error(
-            chalk.red(
-              `invalid --target-creds ${JSON.stringify(kv)} — expected KEY=VALUE`,
-            ),
+          log.error(
+            `invalid --target-creds ${JSON.stringify(kv)} — expected KEY=VALUE`,
           );
           process.exit(2);
         }
@@ -401,9 +390,7 @@ program
         return;
       }
       if (db.getRun(opts.runId) === null) {
-        console.error(
-          chalk.red(`unknown run_id ${JSON.stringify(opts.runId)}`),
-        );
+        log.error(`unknown run_id ${JSON.stringify(opts.runId)}`);
         process.exit(1);
       }
       showRunDetail(db, opts.runId);
@@ -431,7 +418,20 @@ program
     "--out <path>",
     "Write the rendered report to a file instead of stdout.",
   )
+  .option(
+    "--serve",
+    "Open the interactive triage viewer (local web UI) for this run instead of printing.",
+  )
+  .option(
+    "--port <n>",
+    "Port for --serve (default 7878).",
+    (v) => Number.parseInt(v, 10),
+  )
   .action((opts) => {
+    if (opts.serve) {
+      serveTriage(opts.runId, opts.port);
+      return;
+    }
     if (!["json", "md", "sarif"].includes(opts.format)) {
       log.error("invalid --format; use json, md, or sarif");
       process.exit(2);
@@ -501,6 +501,229 @@ program
     );
   });
 
+// ---------------- fix (Stage 9, opt-in) ----------------
+
+program
+  .command("fix")
+  .description(
+    "Generate minimal patches + regression tests for confirmed, reachable findings (Stage 9, opt-in).",
+  )
+  .requiredOption("--run-id <id>")
+  .option(
+    "--repo <path>",
+    "Path to the target source repo (default: current directory).",
+    process.cwd(),
+  )
+  .option(
+    "--apply",
+    "Apply the generated patches to a new branch (requires a clean working tree).",
+  )
+  .option(
+    "--open-pr",
+    "Apply, push, and open a draft PR via `gh`. Never merges. Implies --apply.",
+  )
+  .option("--branch <name>", "Branch for --apply/--open-pr (default audit/fix-<run-id>).")
+  .option("--config <path>", "Override config/stages.yaml.")
+  .option("--allow-api-key", "Honor ANTHROPIC_API_KEY for metered billing.")
+  .action(async (opts) => {
+    const allow = allowApiKeyFromEnvOrFlag(Boolean(opts.allowApiKey));
+    try {
+      configureAuth({ allowApiKey: allow });
+    } catch (e) {
+      if (e instanceof AuthError) {
+        log.error(`auth error: ${e.message}`);
+        process.exit(2);
+      }
+      throw e;
+    }
+
+    const repoPath = resolve(opts.repo);
+    if (!existsSync(repoPath)) {
+      log.error(`--repo path does not exist: ${repoPath}`);
+      process.exit(2);
+    }
+    if (!isGitRepo(repoPath)) {
+      log.error(`audit fix requires a git repo (it patches inside a worktree): ${repoPath}`);
+      process.exit(2);
+    }
+
+    const config = opts.config ? loadConfig(opts.config) : loadConfig();
+    const db = new StateDB(DB_PATH);
+    let summary: { generated: number; skipped: number; fixesPath: string };
+    try {
+      if (db.getRun(opts.runId) === null) {
+        log.error(`unknown run_id ${JSON.stringify(opts.runId)}`);
+        process.exit(1);
+      }
+      const ctx = new StageContext(opts.runId, repoPath, config);
+      summary = await runFix(ctx, db);
+    } finally {
+      db.close();
+    }
+
+    if (summary.generated === 0) {
+      log.info("no patches generated — nothing to apply");
+      return;
+    }
+    if (opts.apply || opts.openPr) {
+      applyFixes(repoPath, opts.runId, summary.fixesPath, {
+        branch: opts.branch,
+        openPr: Boolean(opts.openPr),
+      });
+    } else {
+      log.info(
+        `review patches in ${join(RESULTS, opts.runId, "fix")} — re-run with --apply to land them on a branch`,
+      );
+    }
+  });
+
+// ---------------- stats ----------------
+
+program
+  .command("stats")
+  .description("Cost & token breakdown by stage/model, and cost-per-finding.")
+  .requiredOption("--run-id <id>")
+  .option("--config <path>", "Override config/stages.yaml (for stage→model mapping).")
+  .option("--json", "Emit the raw stats object as JSON.")
+  .action((opts) => {
+    const db = new StateDB(DB_PATH);
+    try {
+      if (db.getRun(opts.runId) === null) {
+        log.error(`unknown run_id ${JSON.stringify(opts.runId)}`);
+        process.exit(1);
+      }
+      let config = null;
+      try {
+        config = opts.config ? loadConfig(opts.config) : loadConfig();
+      } catch {
+        config = null; // stage→model becomes "?" but the rollup still works
+      }
+      const stats = computeStats(db, config, opts.runId);
+      if (opts.json) {
+        process.stdout.write(`${JSON.stringify(stats, null, 2)}\n`);
+      } else {
+        renderStats(stats);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+// ---------------- shared: triage viewer ----------------
+
+function serveTriage(runId: string, port?: number): void {
+  const db = new StateDB(DB_PATH);
+  if (db.getRun(runId) === null) {
+    log.error(`unknown run_id ${JSON.stringify(runId)}`);
+    db.close();
+    process.exit(1);
+  }
+  const server = serveViewer(db, runId, { port });
+  const shutdown = () => {
+    server.stop();
+    db.close();
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+}
+
+// ---------------- shared: apply fixes to a branch ----------------
+
+function sh(
+  cmd: string[],
+  cwd: string,
+): { ok: boolean; stdout: string; stderr: string } {
+  const p = Bun.spawnSync(cmd, { cwd });
+  return {
+    ok: p.exitCode === 0,
+    stdout: new TextDecoder().decode(p.stdout),
+    stderr: new TextDecoder().decode(p.stderr),
+  };
+}
+
+function applyFixes(
+  repoPath: string,
+  runId: string,
+  fixesPath: string,
+  opts: { branch?: string; openPr: boolean },
+): void {
+  // Refuse to touch a dirty tree — we create a branch off HEAD and apply onto it.
+  if (sh(["git", "status", "--porcelain"], repoPath).stdout.trim() !== "") {
+    log.error(
+      "working tree is not clean — commit or stash changes before --apply/--open-pr",
+    );
+    process.exit(2);
+  }
+
+  const fixes = (JSON.parse(readFileSync(fixesPath, "utf8")).fixes ??
+    []) as Json[];
+  const patches = fixes
+    .map((f) => f.patch_file)
+    .filter((p: string) => p && existsSync(p));
+  if (patches.length === 0) {
+    log.warn("no patch files to apply");
+    return;
+  }
+
+  const branch = opts.branch || `audit/fix-${runId}`;
+  if (!sh(["git", "checkout", "-b", branch], repoPath).ok) {
+    log.error(`could not create branch ${branch} (does it already exist?)`);
+    process.exit(2);
+  }
+
+  let applied = 0;
+  for (const patch of patches) {
+    const res = sh(["git", "apply", "--index", "--3way", patch], repoPath);
+    if (res.ok) applied++;
+    else log.warn(`patch did not apply cleanly, skipped: ${patch} — ${res.stderr.trim().slice(0, 160)}`);
+  }
+  if (applied === 0) {
+    log.error("no patches applied cleanly; leaving branch uncommitted for manual review");
+    return;
+  }
+
+  sh(
+    [
+      "git",
+      "commit",
+      "-m",
+      `fix(security): auto-fix ${applied} reachable finding(s) [audit ${runId}]\n\nGenerated by \`audit fix\`. Review every hunk — never auto-merge.`,
+    ],
+    repoPath,
+  );
+  log.success(`applied ${applied}/${patches.length} patch(es) on branch ${branch}`);
+
+  if (!opts.openPr) {
+    log.info(`open a PR when ready: git push -u origin ${branch} && gh pr create`);
+    return;
+  }
+
+  if (!sh(["gh", "--version"], repoPath).ok) {
+    log.error("`gh` CLI not found — pushed nothing. Install GitHub CLI or push manually.");
+    return;
+  }
+  if (!sh(["git", "push", "-u", "origin", branch], repoPath).ok) {
+    log.error("git push failed — not opening a PR");
+    return;
+  }
+  const pr = sh(
+    [
+      "gh",
+      "pr",
+      "create",
+      "--draft",
+      "--title",
+      `Security auto-fixes (audit ${runId})`,
+      "--body",
+      `Automated patches for confirmed + reachable findings from \`audit\` run \`${runId}\`.\n\n**Draft on purpose — review every hunk. Do not auto-merge.**`,
+    ],
+    repoPath,
+  );
+  if (pr.ok) log.success(`draft PR opened: ${pr.stdout.trim()}`);
+  else log.error(`gh pr create failed: ${pr.stderr.trim().slice(0, 200)}`);
+}
+
 // ---------------- table renderers ----------------
 
 function row(cells: string[], widths: number[]): string {
@@ -509,11 +732,11 @@ function row(cells: string[], widths: number[]): string {
 
 function showRunsTable(db: StateDB): void {
   const runs = db.listRuns();
-  console.log(chalk.bold("runs"));
+  log.print(chalk.bold("runs"));
   const widths = [22, 40, 12, 10];
-  console.log(chalk.dim(row(["run_id", "repo", "status", "cost ($)"], widths)));
+  log.print(chalk.dim(row(["run_id", "repo", "status", "cost ($)"], widths)));
   for (const r of runs) {
-    console.log(
+    log.print(
       row(
         [r.run_id, r.repo_path, r.status, db.totalCost(r.run_id).toFixed(4)],
         widths,
@@ -529,10 +752,10 @@ function showRunDetail(db: StateDB, runId: string): void {
   const canonical = confirmed.filter((f) => f.isCanonical);
   const reachable = db.getReachableCanonicalFindings(runId);
 
-  console.log(chalk.bold(`run ${runId}`));
+  log.print(chalk.bold(`run ${runId}`));
   const widths = [22, 8];
   const print = (m: string, c: number) =>
-    console.log(row([m, String(c)], widths));
+    log.print(row([m, String(c)], widths));
   print("tasks (total)", tasks.length);
   print("tasks (pending)", tasks.filter((t) => t.status === "pending").length);
   print("tasks (done)", tasks.filter((t) => t.status === "done").length);
@@ -541,7 +764,95 @@ function showRunDetail(db: StateDB, runId: string): void {
   print("findings (confirmed)", confirmed.length);
   print("findings (canonical)", canonical.length);
   print("findings (reachable)", reachable.length);
-  console.log(row(["total cost ($)", db.totalCost(runId).toFixed(4)], widths));
+  log.print(row(["total cost ($)", db.totalCost(runId).toFixed(4)], widths));
+}
+
+function renderStats(s: Stats): void {
+  const n = (x: number) => x.toLocaleString("en-US");
+  const usd = (x: number) => `$${x.toFixed(4)}`;
+  const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+
+  log.print(chalk.bold(`cost breakdown — ${s.runId}`));
+  const widths = [10, 20, 6, 12, 12, 12, 11, 7];
+  log.print(
+    chalk.dim(
+      row(
+        ["stage", "model", "calls", "in", "out", "cache_rd", "cost", "%"],
+        widths,
+      ),
+    ),
+  );
+  for (const st of s.stages) {
+    log.print(
+      row(
+        [
+          st.stage,
+          st.model,
+          n(st.calls),
+          n(st.inputTokens),
+          n(st.outputTokens),
+          n(st.cacheReadTokens),
+          usd(st.usd),
+          pct(st.costShare),
+        ],
+        widths,
+      ),
+    );
+  }
+  log.print(
+    chalk.bold(
+      row(
+        [
+          "TOTAL",
+          "",
+          n(s.stages.reduce((a, x) => a + x.calls, 0)),
+          "",
+          "",
+          "",
+          usd(s.totalUsd),
+          "100%",
+        ],
+        widths,
+      ),
+    ),
+  );
+
+  if (s.byModel.length > 1) {
+    log.print(chalk.bold("\nby model"));
+    for (const m of s.byModel)
+      log.print(
+        row([m.model, `${n(m.calls)} calls`, usd(m.usd)], [22, 14, 10]),
+      );
+  }
+
+  log.print(chalk.bold("\nyield"));
+  const k2 = [24, 16];
+  log.print(
+    row(
+      ["findings (raw/conf/reach)", `${s.counts.raw}/${s.counts.confirmed}/${s.counts.reachable}`],
+      k2,
+    ),
+  );
+  log.print(
+    row(
+      [
+        "cost / confirmed",
+        s.perConfirmedUsd == null ? "—" : usd(s.perConfirmedUsd),
+      ],
+      k2,
+    ),
+  );
+  log.print(
+    row(
+      [
+        "cost / reachable",
+        s.perReachableUsd == null ? "—" : usd(s.perReachableUsd),
+      ],
+      k2,
+    ),
+  );
+  log.print(row(["prompt-cache hit ratio", pct(s.cacheHitRatio)], k2));
+  log.print(row(["total tokens", n(s.totalTokens)], k2));
 }
 
 function renderMarkdownReport(report: Json): string {

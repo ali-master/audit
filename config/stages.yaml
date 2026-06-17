@@ -44,6 +44,14 @@ stages:
     model: claude-sonnet-4-6
     concurrency: 1
     tools: [Read]
+  # Stage 9 — opt-in auto-fix (`audit fix`). Edits inside a throwaway git
+  # worktree, so Edit/Write are safe; Opus because writing a correct, minimal
+  # patch + regression test is the most demanding generation task in the suite.
+  fix:
+    model: claude-opus-4-7
+    concurrency: 3
+    tools: [Read, Grep, Glob, Bash, Edit, Write]
+    max_turns: 40
 
 # Bounded loops to prevent runaway cost
 loops:
