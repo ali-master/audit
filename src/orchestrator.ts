@@ -34,6 +34,11 @@ export interface RunPipelineParams {
   maxReconTasks?: number | null;
   liveTarget?: LiveTarget | null;
   scopeNotes?: string | null;
+  /**
+   * Diff/PR mode: repo-relative paths the branch changed. When provided (even
+   * empty), Recon scopes its hunt queue to these files and their blast radius.
+   */
+  changedFiles?: string[] | null;
 }
 
 export async function runPipeline(params: RunPipelineParams): Promise<string> {
@@ -47,9 +52,17 @@ export async function runPipeline(params: RunPipelineParams): Promise<string> {
     maxReconTasks = null,
     liveTarget = null,
     scopeNotes = null,
+    changedFiles = null,
   } = params;
 
-  const ctx = new StageContext(runId, repoPath, config, liveTarget, scopeNotes);
+  const ctx = new StageContext(
+    runId,
+    repoPath,
+    config,
+    liveTarget,
+    scopeNotes,
+    changedFiles,
+  );
 
   if (db.getRun(runId) === null) {
     db.createRun(repoPath, runId);

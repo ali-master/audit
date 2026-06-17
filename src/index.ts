@@ -11,11 +11,28 @@ export {
   configureAuth,
 } from "./auth";
 export {
+  applyBaseline,
+  BASELINE_VERSION,
+  type BaselineEntry,
+  type BaselineFile,
+  buildBaseline,
+  type Delta,
+  fingerprintFinding,
+  normalizeRepoPath,
+  parseBaseline,
+} from "./baseline";
+export {
   HarnessConfig,
   loadConfig,
   type PermissionMode,
   type StageConfig,
 } from "./config";
+export {
+  changedFiles,
+  type ChangedFilesResult,
+  type DiffSpec,
+  isGitRepo,
+} from "./diff";
 export { extractJson, validateSchema } from "./jsonUtils";
 export {
   CostExceeded,
@@ -31,5 +48,6 @@ export {
   type RunAgentParams,
   TransientAgentError,
 } from "./runner";
+export { type SarifOptions, toSarif } from "./sarif";
 export { type LiveTarget, StageContext } from "./stages";
 export { type Finding, type RunRow, StateDB, type Task } from "./state";

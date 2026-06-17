@@ -126,6 +126,26 @@ total: 7  —  critical: 3, high: 2, medium: 2
 The adversarial Validate stage also *rejected* several lower-confidence findings
 before they reached the report — that's the point.
 
+## On every pull request
+
+Scan only what the branch changed, suppress findings you've already accepted,
+and fail the build only on **new** issues at or above a severity:
+
+```bash
+# Once, on the default branch — accept the current findings as the baseline:
+audit run --run-id main && audit baseline --run-id main --out .audit-baseline.json
+
+# On every PR — diff-scoped scan, new-only gate, SARIF for the Security tab:
+audit run --base main --baseline .audit-baseline.json --fail-on high
+audit report --run-id <id> --format sarif --out audit.sarif
+```
+
+`--base`/`--since` feed **Recon** only the changed files plus their blast radius
+(callers/callees/importers), so a PR scan costs cents. Findings are matched by a
+line-shift-robust fingerprint; the exit code is `4` when the gate trips. The
+SARIF output carries the reachability trace as `codeFlows` — reviewers see the
+entry-point→sink path, not just the sink. See the [CLI reference](docs/cli.md).
+
 ## Features
 
 - ✅ Subscription billing by default — `ANTHROPIC_API_KEY` is scrubbed so it can't
@@ -135,6 +155,9 @@ before they reached the report — that's the point.
 - ✅ **Live-target mode** — reproduce findings against a running deployment with
   real HTTP ([docs](docs/live-target.md)).
 - ✅ **Scope notes** — exclude intentional-by-design surfaces ([docs](docs/scope-notes.md)).
+- ✅ **Diff / PR mode** — `--base`/`--since` scope the scan to changed files + blast radius.
+- ✅ **Baseline & delta** — fingerprint findings, suppress known ones, surface NEW/FIXED.
+- ✅ **SARIF + exit-code gating** — `--format sarif` and `--fail-on high` for CI / the GitHub Security tab.
 - ✅ Git-history mining — seeds hunts against unpatched siblings of past fixes.
 - ✅ Resumable runs, per-stage concurrency, and a hard cost ceiling.
 

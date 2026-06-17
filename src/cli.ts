@@ -4,20 +4,93 @@
  * runs under Bun (uses bun:sqlite and other Bun-native APIs).
  */
 
-import { readFileSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { resolve, join } from "node:path";
 import chalk from "chalk";
 import { Command } from "commander";
 import { configureAuth, AuthError } from "./auth";
+import { parseBaseline, buildBaseline, applyBaseline } from "./baseline";
+import type { Delta } from "./baseline";
 import { loadConfig } from "./config";
+import { isGitRepo, changedFiles } from "./diff";
 import { setVerbose, log } from "./logger";
 import { runPipeline, CostExceeded } from "./orchestrator";
 import { RESULTS, DB_PATH } from "./paths";
+import { toSarif } from "./sarif";
 import { StateDB } from "./state";
 import updateNotifier from "update-notifier";
 import pkg from "../package.json";
 
 type Json = any;
+
+// Exit codes: 2 = usage error, 3 = cost-budget abort, 4 = --fail-on gate
+// tripped (clean scan, but findings crossed the severity threshold).
+const EXIT_GATE = 4;
+
+// Highest (index 4) to lowest (index 0). Used for --fail-on thresholds.
+const SEVERITIES = [
+  "informational",
+  "low",
+  "medium",
+  "high",
+  "critical",
+] as const;
+
+function severityRank(sev: string): number {
+  const i = SEVERITIES.indexOf(sev as (typeof SEVERITIES)[number]);
+  return i < 0 ? 0 : i;
+}
+
+/** Load a run's final report.json, or exit(1) if it is missing. */
+function loadReportOrExit(runId: string): Json {
+  const reportPath = join(RESULTS, runId, "report", "report.json");
+  if (!existsSync(reportPath)) {
+    log.error(`no report at ${reportPath}`);
+    process.exit(1);
+  }
+  return JSON.parse(readFileSync(reportPath, "utf8"));
+}
+
+function printDelta(delta: Delta): void {
+  log.info(
+    `baseline delta: ${delta.new_count} new, ${delta.still_present_count} still-present, ` +
+      `${delta.fixed_count} fixed (baseline had ${delta.baseline_total})`,
+  );
+}
+
+/**
+ * Exit non-zero when the report contains a finding at or above `failOn`.
+ * Returns normally (no exit) when the gate passes or is disabled. `quiet`
+ * suppresses the success line so it cannot contaminate a machine-readable
+ * report streamed to stdout (failures always log to stderr before exiting).
+ */
+function applyGate(
+  report: Json,
+  failOn: string | undefined,
+  opts: { quiet?: boolean } = {},
+): void {
+  if (!failOn) return;
+  const threshold = severityRank(failOn);
+  const tripping = (report.findings ?? []).filter(
+    (f: Json) => severityRank(f.severity) >= threshold,
+  );
+  if (tripping.length > 0) {
+    log.error(
+      `gate: ${tripping.length} finding(s) at or above "${failOn}" — failing (exit ${EXIT_GATE})`,
+    );
+    process.exit(EXIT_GATE);
+  }
+  if (!opts.quiet) log.success(`gate: no findings at or above "${failOn}"`);
+}
+
+function validateFailOn(failOn: string | undefined): void {
+  if (failOn && !SEVERITIES.includes(failOn as (typeof SEVERITIES)[number])) {
+    log.error(
+      `invalid --fail-on ${JSON.stringify(failOn)}; use one of ${SEVERITIES.join(", ")}`,
+    );
+    process.exit(2);
+  }
+}
 
 function allowApiKeyFromEnvOrFlag(flag: boolean): boolean {
   if (flag) return true;
@@ -128,6 +201,22 @@ program
   .option("--run-id <id>", "Run identifier (default: random).")
   .option("--resume", "Resume an existing run-id.")
   .option(
+    "--base <ref>",
+    "PR mode: scan only what this branch changed vs the merge-base with <ref> (git <ref>...HEAD).",
+  )
+  .option(
+    "--since <ref>",
+    "Incremental: scan only files changed between <ref> and HEAD (git <ref>..HEAD).",
+  )
+  .option(
+    "--baseline <path>",
+    "Suppress findings already present in this baseline file; report NEW/FIXED/STILL-PRESENT.",
+  )
+  .option(
+    "--fail-on <severity>",
+    `Exit ${EXIT_GATE} if any (new) finding is at or above this severity: ${SEVERITIES.join(" | ")}.`,
+  )
+  .option(
     "--max-cost-usd <usd>",
     "Abort if cumulative cost crosses this threshold.",
     Number.parseFloat,
@@ -178,13 +267,42 @@ program
       process.exit(2);
     }
 
+    validateFailOn(opts.failOn);
+    const repoPath = resolve(opts.repo);
+
+    // Diff/PR mode — constrain Recon's input to the changed-file set.
+    let changed: string[] | null = null;
+    if (opts.base || opts.since) {
+      if (opts.base && opts.since) {
+        log.error("--base and --since are mutually exclusive");
+        process.exit(2);
+      }
+      if (!isGitRepo(repoPath)) {
+        log.error(`--base/--since require a git repo: ${repoPath}`);
+        process.exit(2);
+      }
+      try {
+        const res = changedFiles(repoPath, {
+          base: opts.base,
+          since: opts.since,
+        });
+        changed = res.files;
+        log.info(
+          `diff mode: ${res.range} → ${res.files.length} changed file(s)${
+            res.dropped ? ` (${res.dropped} deleted/ignored)` : ""
+          }`,
+        );
+      } catch (e) {
+        log.error("diff error:", (e as Error).message);
+        process.exit(2);
+      }
+    }
+
     const config = opts.config ? loadConfig(opts.config) : loadConfig();
     if (opts.maxConcurrency !== undefined) {
       config.capConcurrency(opts.maxConcurrency);
-      console.log(
-        chalk.cyan(
-          `capped concurrency to ${opts.maxConcurrency} across all stages`,
-        ),
+      log.info(
+        `capped concurrency to ${opts.maxConcurrency} across all stages`,
       );
     }
 
@@ -205,31 +323,27 @@ program
         creds[kv.slice(0, idx).trim()] = kv.slice(idx + 1).trim();
       }
       liveTarget = { url: opts.targetUrl, credentials: creds };
-      console.log(
-        chalk.cyan("live target:"),
-        `${opts.targetUrl} (creds: ${Object.keys(creds).sort()})`,
+      log.info(
+        `live target: ${opts.targetUrl} (creds: ${Object.keys(creds).sort().join(", ")})`,
       );
     } else if ((opts.targetCreds as string[]).length > 0) {
-      console.log(
-        chalk.yellow("--target-creds without --target-url is ignored"),
-      );
+      log.warn("--target-creds without --target-url is ignored");
     }
 
     let scopeNotes: string | null = null;
     if (opts.scopeNotes) {
       scopeNotes = readFileSync(opts.scopeNotes, "utf8");
-      console.log(
-        chalk.cyan("scope notes loaded:"),
-        `${opts.scopeNotes} (${scopeNotes.length} chars)`,
+      log.info(
+        `scope notes loaded: ${opts.scopeNotes} (${scopeNotes.length} chars)`,
       );
     }
 
     const runId = opts.runId || `run_${shortId()}`;
-    const repoPath = resolve(opts.repo);
 
+    let reportPath: string;
     const db = new StateDB(DB_PATH);
     try {
-      const report = await runPipeline({
+      reportPath = await runPipeline({
         repoPath,
         runId,
         db,
@@ -239,20 +353,37 @@ program
         maxReconTasks: opts.maxReconTasks ?? null,
         liveTarget,
         scopeNotes,
+        changedFiles: changed,
       });
-      console.log(chalk.green("done"), `run_id=${runId} report=${report}`);
+      log.success(`done: run_id=${runId} report=${reportPath}`);
     } catch (e) {
       if (e instanceof CostExceeded) {
-        console.log(chalk.yellow("aborted"), e.message);
+        log.warn(`aborted: ${e.message}`);
         process.exit(3);
       }
-      console.error(
-        chalk.red("failed"),
-        `${(e as Error).name}: ${(e as Error).message}`,
-      );
+      log.error(`failed: ${(e as Error).name}: ${(e as Error).message}`);
       throw e;
     } finally {
       db.close();
+    }
+
+    // Post-run: baseline delta + severity gate. Done after the DB is closed so
+    // a process.exit() from the gate never skips cleanup. report.json on disk
+    // stays the raw agent output; baseline filtering is applied in-memory here
+    // (and the `report` subcommand re-derives any view on demand).
+    if (opts.baseline || opts.failOn) {
+      let view: Json = JSON.parse(readFileSync(reportPath, "utf8"));
+      if (opts.baseline) {
+        if (!existsSync(opts.baseline)) {
+          log.error(`--baseline file not found: ${opts.baseline}`);
+          process.exit(2);
+        }
+        const baseline = parseBaseline(readFileSync(opts.baseline, "utf8"));
+        const applied = applyBaseline(view, baseline);
+        view = applied.report;
+        printDelta(applied.delta);
+      }
+      applyGate(view, opts.failOn);
     }
   });
 
@@ -285,25 +416,89 @@ program
 
 program
   .command("report")
-  .description("Print (or generate) the final report.")
+  .description("Print, convert, or gate the final report.")
   .requiredOption("--run-id <id>")
-  .option("--format <fmt>", "json | md", "json")
+  .option("--format <fmt>", "json | md | sarif", "json")
+  .option(
+    "--baseline <path>",
+    "Suppress findings already in this baseline; show NEW/FIXED/STILL-PRESENT.",
+  )
+  .option(
+    "--fail-on <severity>",
+    `Exit ${EXIT_GATE} if any (shown) finding is at or above this severity.`,
+  )
+  .option(
+    "--out <path>",
+    "Write the rendered report to a file instead of stdout.",
+  )
   .action((opts) => {
-    if (opts.format !== "json" && opts.format !== "md") {
-      console.error(chalk.red("invalid --format; use json or md"));
+    if (!["json", "md", "sarif"].includes(opts.format)) {
+      log.error("invalid --format; use json, md, or sarif");
       process.exit(2);
     }
-    const reportPath = join(RESULTS, opts.runId, "report", "report.json");
-    if (!existsSync(reportPath)) {
-      console.error(chalk.red(`no report at ${reportPath}`));
-      process.exit(1);
+    validateFailOn(opts.failOn);
+
+    let payload = loadReportOrExit(opts.runId);
+    let delta: Delta | null = null;
+
+    if (opts.baseline) {
+      if (!existsSync(opts.baseline)) {
+        log.error(`--baseline file not found: ${opts.baseline}`);
+        process.exit(2);
+      }
+      const baseline = parseBaseline(readFileSync(opts.baseline, "utf8"));
+      const applied = applyBaseline(payload, baseline);
+      payload = applied.report;
+      delta = applied.delta;
     }
-    const payload = JSON.parse(readFileSync(reportPath, "utf8"));
-    if (opts.format === "json") {
-      console.log(JSON.stringify(payload, null, 2));
+
+    let rendered: string;
+    if (opts.format === "json") rendered = JSON.stringify(payload, null, 2);
+    else if (opts.format === "sarif")
+      rendered = JSON.stringify(
+        toSarif(payload, { toolVersion: pkg.version }),
+        null,
+        2,
+      );
+    else rendered = renderMarkdownReport(payload);
+
+    // When the payload streams to stdout (json/sarif, no --out) keep stdout a
+    // pristine machine artifact: render with a direct write, suppress logger
+    // diagnostics that would otherwise interleave. With --out, stdout is free.
+    const streamingToStdout = !opts.out;
+    if (opts.out) {
+      writeFileSync(opts.out, rendered);
+      log.success(`wrote ${opts.format} → ${opts.out}`);
+      if (delta) printDelta(delta);
     } else {
-      console.log(renderMarkdownReport(payload));
+      process.stdout.write(
+        rendered.endsWith("\n") ? rendered : `${rendered}\n`,
+      );
     }
+
+    applyGate(payload, opts.failOn, { quiet: streamingToStdout });
+  });
+
+// ---------------- baseline ----------------
+
+program
+  .command("baseline")
+  .description(
+    "Generate a baseline file from a run's report (accept current findings).",
+  )
+  .requiredOption("--run-id <id>")
+  .option(
+    "--out <path>",
+    "Where to write the baseline JSON.",
+    ".audit-baseline.json",
+  )
+  .action((opts) => {
+    const payload = loadReportOrExit(opts.runId);
+    const baseline = buildBaseline(payload);
+    writeFileSync(opts.out, JSON.stringify(baseline, null, 2));
+    log.success(
+      `baseline written: ${opts.out} (${baseline.fingerprints.length} findings accepted)`,
+    );
   });
 
 // ---------------- table renderers ----------------
@@ -363,6 +558,14 @@ function renderMarkdownReport(report: Json): string {
       ? `**Total findings: ${s.total}** — ${bySevStr}`
       : `**Total findings: ${s.total}**`,
   );
+  if (report.delta) {
+    const d = report.delta;
+    lines.push("");
+    lines.push(
+      `_Baseline delta_: **${d.new_count} new**, ${d.still_present_count} still-present, ` +
+        `${d.fixed_count} fixed (baseline had ${d.baseline_total}).`,
+    );
+  }
   lines.push("");
   for (const f of report.findings ?? []) {
     lines.push(`## ${f.title}`);

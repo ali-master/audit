@@ -21,6 +21,7 @@ A JSON object:
 {
   "repo_path": "/abs/path/to/target",
   "max_tasks": 80,
+  "changed_files": ["src/api/upload.ts", "src/lib/storage.ts"],
   "scope_notes": "<optional verbatim text — when present, lists target-specific exclusions or context>",
   "live_target": {
     "url": "http://server.local:8888",
@@ -29,11 +30,30 @@ A JSON object:
 }
 ```
 
-`scope_notes` and `live_target` are **optional**. If present, treat
-`scope_notes` as authoritative additional rules. If `live_target` is
-provided, the downstream Hunt agents will be able to send actual
-requests at this URL — bias your task queue toward attack classes that
+`changed_files`, `scope_notes`, and `live_target` are all **optional**. If
+present, treat `scope_notes` as authoritative additional rules. If
+`live_target` is provided, the downstream Hunt agents will be able to send
+actual requests at this URL — bias your task queue toward attack classes that
 benefit from runtime confirmation.
+
+## Diff / PR mode (when `changed_files` is present)
+
+If `changed_files` is provided, you are auditing a **pull request**, not the
+whole repo. Scan only what this branch could have affected:
+
+1. Still build the full subsystem / architecture map (downstream stages and
+   reachability tracing need it) — but you may map at lower resolution for
+   areas the diff does not touch.
+2. **Every hunt task you emit must have its sink (or, for a `logic_chain`, at
+   least one link) in a changed file _or_ in that file's immediate blast
+   radius** — the direct callers, callees, and importers of the changed code.
+   Trace one hop out from each changed file (grep for who imports/calls the
+   changed symbols) and include those as in-scope.
+3. Do **not** emit tasks against code unrelated to the diff, however juicy —
+   a prior run already covered it. A changed file that only adds a new sink,
+   or weakens an existing guard, is the highest-priority target.
+4. If `changed_files` is empty, emit **zero** `initial_tasks` (return the
+   architecture map with `"initial_tasks": []`); there is nothing new to hunt.
 
 The repo is mounted at `repo_path` and you can read it with Read, Grep,
 Glob, and Bash (use Bash only for read-only inspection: `git log --oneline

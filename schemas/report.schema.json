@@ -16,6 +16,18 @@
         "commit": { "type": "string" }
       }
     },
+    "delta": {
+      "type": "object",
+      "description": "Present only when a --baseline was applied. Counts NEW vs known findings and lists those FIXED since the baseline.",
+      "required": ["baseline_total", "new_count", "still_present_count", "fixed_count"],
+      "additionalProperties": true,
+      "properties": {
+        "baseline_total": { "type": "integer", "minimum": 0 },
+        "new_count": { "type": "integer", "minimum": 0 },
+        "still_present_count": { "type": "integer", "minimum": 0 },
+        "fixed_count": { "type": "integer", "minimum": 0 }
+      }
+    },
     "summary": {
       "type": "object",
       "required": ["total", "by_severity"],

@@ -22,8 +22,11 @@ export async function runRecon(
 
   const sc = ctx.stage("recon");
   const schema = ctx.schema("recon_output");
+  const diffMode = ctx.changedFiles !== null;
   const st = log.stage(`[${ctx.runId}] recon`, {
-    detail: `model=${sc.model} max_tasks=${maxTasks}`,
+    detail: diffMode
+      ? `model=${sc.model} diff-mode (${ctx.changedFiles!.length} changed files)`
+      : `model=${sc.model} max_tasks=${maxTasks}`,
   });
 
   const result = await runAgent({
@@ -32,6 +35,7 @@ export async function runRecon(
     userInput: {
       repo_path: ctx.repoPath,
       max_tasks: maxTasks,
+      ...(diffMode ? { changed_files: ctx.changedFiles } : {}),
       ...ctx.extras(),
     },
     schemaName: schema.name,

@@ -74,7 +74,8 @@
     },
     "initial_tasks": {
       "type": "array",
-      "minItems": 1,
+      "minItems": 0,
+      "description": "Normally 30-max_tasks tasks. In diff/PR mode this may be small or empty when the changed files expose no new attack surface.",
       "items": { "$ref": "hunt_task.schema.json" }
     }
   }

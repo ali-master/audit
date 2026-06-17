@@ -5,7 +5,7 @@
  * `cd`'d into a target repo.
  */
 
-import { join, dirname, resolve } from "node:path";
+import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // This module lives at <root>/src/paths.ts (and, when bundled, at <root>/dist/),

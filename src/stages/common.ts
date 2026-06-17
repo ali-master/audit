@@ -23,6 +23,12 @@ export class StageContext {
     readonly liveTarget: LiveTarget | null = null,
     /** Verbatim text appended to every agent's user_input. */
     readonly scopeNotes: string | null = null,
+    /**
+     * Diff/PR mode: repo-relative paths the current branch changed. When set
+     * (even if empty), Recon scopes its task queue to these files and their
+     * blast radius instead of scanning the whole repo.
+     */
+    readonly changedFiles: string[] | null = null,
   ) {
     this.repoPath = resolve(repoPath);
   }

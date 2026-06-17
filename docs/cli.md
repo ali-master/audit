@@ -11,7 +11,8 @@ Commands:
   auth-check [options]   Verify Claude auth is configured correctly
   run [options]          Run the full 8-stage pipeline against a target repo
   status [options]       Show pipeline status: tasks, findings, traces, cost
-  report [options]       Print (or generate) the final report
+  report [options]       Print, convert, or gate the final report
+  baseline [options]     Generate a baseline file from a run's report
 ```
 
 > **Running from source instead?** Swap `audit` for `bun run src/cli.ts` in any
@@ -58,6 +59,10 @@ audit run --run-id my-run
 | `--repo <path>` | Path to the target source repo (default: current working directory) |
 | `--run-id <id>` | Run identifier (default: random `run_xxxxxxxx`) |
 | `--resume` | Resume an existing run-id (re-queues interrupted/failed work) |
+| `--base <ref>` | **PR mode** — scan only what this branch changed vs the merge-base with `<ref>` (git `<ref>...HEAD`) |
+| `--since <ref>` | **Incremental** — scan only files changed between `<ref>` and HEAD (git `<ref>..HEAD`) |
+| `--baseline <path>` | Suppress findings already in this baseline; print the NEW/FIXED/STILL-PRESENT delta and gate on NEW only |
+| `--fail-on <severity>` | Exit `4` if any (new) finding is `informational\|low\|medium\|high\|critical` or above |
 | `--max-cost-usd <usd>` | Abort cleanly if cumulative cost crosses this threshold |
 | `--max-concurrency <n>` | Cap every stage's concurrency to this value |
 | `--max-recon-tasks <n>` | Cap the number of initial Hunt tasks Recon may emit |
@@ -67,7 +72,35 @@ audit run --run-id my-run
 | `--config <path>` | Override `config/stages.yaml` |
 | `--allow-api-key` | Honor `ANTHROPIC_API_KEY` for metered billing |
 
-Exit codes: `0` success · `2` auth/usage error · `3` budget exceeded (resumable).
+Exit codes: `0` success · `2` auth/usage error · `3` budget exceeded (resumable)
+· `4` `--fail-on` gate tripped (clean scan, but a finding crossed the threshold).
+
+### Diff / PR mode
+
+`--base` and `--since` (mutually exclusive) constrain **Recon** to the changed
+files plus their immediate blast radius (callers, callees, importers) instead of
+the whole repo — a PR scan costs cents instead of dollars. They require a git
+repo. An empty diff yields an empty report (nothing new to hunt).
+
+```bash
+# On a PR branch: scan only what the branch introduced vs main.
+audit run --base main --fail-on high
+```
+
+### Baseline gating (only fail on *new* findings)
+
+```bash
+# 1) Accept the current findings as the baseline (once, on the default branch):
+audit run --run-id main-scan
+audit baseline --run-id main-scan --out .audit-baseline.json
+
+# 2) On every PR, suppress known findings and fail only on NEW ones:
+audit run --base main --baseline .audit-baseline.json --fail-on high
+```
+
+Findings are matched by a stable fingerprint — `vuln_class` + repo-relative path
++ a hash of the sink's evidence snippet — so they survive line shifts and
+reformatting. The run prints `N new, M still-present, K fixed`.
 
 > **Where state lands:** `results/`, `work/`, and `state.db` are written to the
 > current working directory (the repo you're auditing), not the install
@@ -106,16 +139,47 @@ Detail view shows task counts (total/pending/done/failed), finding counts
 ## `report`
 
 ```bash
-audit report --run-id my-run --format json   # default
+audit report --run-id my-run --format json              # default
 audit report --run-id my-run --format md > report.md
+audit report --run-id my-run --format sarif --out audit.sarif
+audit report --run-id my-run --baseline .audit-baseline.json --fail-on high
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--run-id <id>` | **Required.** Which run to report on |
-| `--format <fmt>` | `json` (default) or `md` |
+| `--format <fmt>` | `json` (default), `md`, or `sarif` |
+| `--baseline <path>` | Suppress findings in this baseline; show NEW/FIXED/STILL-PRESENT |
+| `--fail-on <severity>` | Exit `4` if any (shown) finding is at or above this severity |
+| `--out <path>` | Write the rendered report to a file instead of stdout |
 
-Reads `results/<run-id>/report/report.json`. Exit `1` if no report exists yet.
+Reads `results/<run-id>/report/report.json`. Exit `1` if no report exists yet,
+`4` if `--fail-on` trips. When the rendered payload streams to stdout
+(`json`/`sarif` with no `--out`), diagnostics go to **stderr** so the artifact
+stays pipe-clean.
+
+**SARIF** (`--format sarif`) emits SARIF 2.1.0 for the GitHub Advanced Security
+"Security" tab, GitLab SAST, and other triage tooling. Because audit produces a
+reachability trace, each result carries a `codeFlows` entry built from the Trace
+stage's `call_chain` — reviewers see the entry-point→sink path, not just the
+sink — plus a `partialFingerprints` value so GitHub dedupes across line shifts.
+
+---
+
+## `baseline`
+
+Snapshots a run's findings into a baseline file you commit to the repo. Future
+runs/reports compare against it so only *new* findings surface.
+
+```bash
+audit baseline --run-id my-run                          # → .audit-baseline.json
+audit baseline --run-id my-run --out security/base.json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--run-id <id>` | **Required.** Run whose report seeds the baseline |
+| `--out <path>` | Where to write the baseline (default `.audit-baseline.json`) |
 
 ---
 
