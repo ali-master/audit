@@ -19,10 +19,10 @@ export async function runValidate(
 
   const sc = ctx.stage("validate");
   const schema = ctx.schema("validation");
-  log.info(
-    `[${ctx.runId}] validate: ${unvalidated.length} findings ` +
-      `(concurrency=${sc.concurrency}, model=${sc.model})`,
-  );
+  const st = log.stage(`[${ctx.runId}] validate`, {
+    total: unvalidated.length,
+    detail: `concurrency=${sc.concurrency} model=${sc.model}`,
+  });
 
   const tasksById = new Map(
     db.getAllTasks(ctx.runId).map((t) => [t.taskId, t]),
@@ -63,6 +63,7 @@ export async function runValidate(
         artifactDir: ctx.resultsDir("validate"),
         artifactName: f.findingId,
         repairAttempts: sc.repairAttempts,
+        onActivity: (d) => st.update(`${f.findingId} · ${d}`),
       });
 
       const verdict = result.payload.verdict ?? "needs_more_info";
@@ -81,10 +82,12 @@ export async function runValidate(
         result.artifactPath,
       );
       counters[verdict] = (counters[verdict] ?? 0) + 1;
+      st.step(`${f.findingId} → ${verdict}`);
     } catch (e) {
       if (e instanceof AgentRunError || e instanceof TransientAgentError) {
         log.warn(`[${ctx.runId}] validate ${f.findingId} failed: ${e.message}`);
         counters.failed++;
+        st.step(`${f.findingId} failed`);
         // Treat unparseable validation as needs_more_info to avoid silently
         // confirming.
         db.setFindingValidation(f.findingId, "needs_more_info", {
@@ -100,7 +103,7 @@ export async function runValidate(
   };
 
   await mapWithConcurrency(unvalidated, sc.concurrency, one);
-  log.info(
+  st.succeed(
     `[${ctx.runId}] validate: confirmed=${counters.confirmed} rejected=${counters.rejected} ` +
       `needs_more_info=${counters.needs_more_info} failed=${counters.failed}`,
   );

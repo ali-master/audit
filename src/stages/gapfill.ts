@@ -51,6 +51,9 @@ export async function runGapfill(
     ...ctx.extras(),
   };
 
+  const st = log.stage(`[${ctx.runId}] gapfill`, {
+    detail: `analyzing ${completed.length} completed tasks`,
+  });
   let result;
   try {
     result = await runAgent({
@@ -68,12 +71,11 @@ export async function runGapfill(
       artifactDir: ctx.resultsDir("gapfill"),
       artifactName: `gapfill_iter_${db.artifactCount(ctx.runId, "gapfill") + 1}`,
       repairAttempts: sc.repairAttempts,
+      onActivity: st.onActivity,
     });
   } catch (e) {
     if (e instanceof AgentRunError || e instanceof TransientAgentError) {
-      log.warn(
-        `[${ctx.runId}] gapfill failed: ${e.message} — skipping iteration`,
-      );
+      st.warn(`[${ctx.runId}] gapfill failed: ${e.message} — skipping iteration`);
       return 0;
     }
     throw e;
@@ -89,7 +91,7 @@ export async function runGapfill(
   }
   db.recordCost(ctx.runId, "gapfill", null, result.rawResultMessage);
   db.addArtifact(ctx.runId, "gapfill", null, "jsonl", result.artifactPath);
-  log.info(`[${ctx.runId}] gapfill: added ${added} new tasks`);
+  st.succeed(`[${ctx.runId}] gapfill: added ${added} new tasks`);
   return added;
 }
 

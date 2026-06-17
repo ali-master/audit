@@ -35,16 +35,17 @@ export async function runHunt(
   let aborted = false;
   let quotaError: QuotaExhaustedError | null = null;
 
-  log.info(
-    `[${ctx.runId}] hunt: dispatching ${pending.length} tasks ` +
-      `(concurrency=${sc.concurrency}, model=${sc.model})`,
-  );
+  const st = log.stage(`[${ctx.runId}] hunt`, {
+    total: pending.length,
+    detail: `concurrency=${sc.concurrency} model=${sc.model}`,
+  });
 
   const counters = { findings: 0, tasksDone: 0, tasksFailed: 0, skipped: 0 };
 
   const one = async (task: Task): Promise<void> => {
     if (aborted) {
       counters.skipped++;
+      st.step();
       return;
     }
     if (budgetCheck) {
@@ -54,6 +55,7 @@ export async function runHunt(
         log.warn(`[${ctx.runId}] hunt aborting: ${(e as Error).message}`);
         aborted = true;
         counters.skipped++;
+        st.step();
         return;
       }
     }
@@ -87,6 +89,7 @@ export async function runHunt(
         artifactDir: ctx.resultsDir("hunt"),
         artifactName: task.taskId,
         repairAttempts: sc.repairAttempts,
+        onActivity: (d) => st.update(`${task.taskId} · ${d}`),
       });
 
       const findings = result.payload.findings ?? [];
@@ -105,9 +108,8 @@ export async function runHunt(
       );
       db.addArtifact(ctx.runId, "hunt", task.taskId, "scratch_dir", scratch);
       counters.tasksDone++;
-      log.info(
-        `[${ctx.runId}] hunt ${task.taskId}: ${findings.length} findings ` +
-          `(cost=$${(result.costUsd ?? 0).toFixed(4)})`,
+      st.step(
+        `${task.taskId} → ${findings.length} findings ($${(result.costUsd ?? 0).toFixed(4)})`,
       );
     } catch (e) {
       if (e instanceof QuotaExhaustedError) {
@@ -132,14 +134,18 @@ export async function runHunt(
       }
       db.updateTaskStatus(task.taskId, "failed");
       counters.tasksFailed++;
+      st.step(`${task.taskId} failed`);
     }
   };
 
   await mapWithConcurrency(pending, sc.concurrency, one);
 
-  if (quotaError) throw quotaError;
+  if (quotaError) {
+    st.fail(`[${ctx.runId}] hunt aborted: subscription quota exhausted`);
+    throw quotaError;
+  }
 
-  log.info(
+  st.succeed(
     `[${ctx.runId}] hunt: done=${counters.tasksDone} failed=${counters.tasksFailed} ` +
       `skipped=${counters.skipped} findings=${counters.findings}`,
   );

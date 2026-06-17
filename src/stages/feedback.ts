@@ -29,6 +29,9 @@ export async function runFeedback(
     trace,
   }));
 
+  const st = log.stage(`[${ctx.runId}] feedback`, {
+    detail: `seeding from ${reachable.length} reachable traces`,
+  });
   let result;
   try {
     result = await runAgent({
@@ -51,10 +54,11 @@ export async function runFeedback(
       artifactDir: ctx.resultsDir("feedback"),
       artifactName: "feedback",
       repairAttempts: sc.repairAttempts,
+      onActivity: st.onActivity,
     });
   } catch (e) {
     if (e instanceof AgentRunError || e instanceof TransientAgentError) {
-      log.warn(`[${ctx.runId}] feedback failed: ${e.message}`);
+      st.warn(`[${ctx.runId}] feedback failed: ${e.message}`);
       return 0;
     }
     throw e;
@@ -71,7 +75,7 @@ export async function runFeedback(
   }
   db.recordCost(ctx.runId, "feedback", null, result.rawResultMessage);
   db.addArtifact(ctx.runId, "feedback", null, "jsonl", result.artifactPath);
-  log.info(
+  st.succeed(
     `[${ctx.runId}] feedback: ${added} new tasks from ${reachable.length} reachable traces`,
   );
   return added;

@@ -24,9 +24,9 @@ export async function runDedupe(
     validation: f.validationJson,
   }));
 
-  log.info(
-    `[${ctx.runId}] dedupe: clustering ${confirmed.length} confirmed findings`,
-  );
+  const st = log.stage(`[${ctx.runId}] dedupe`, {
+    detail: `clustering ${confirmed.length} confirmed findings`,
+  });
   let result;
   try {
     result = await runAgent({
@@ -44,10 +44,11 @@ export async function runDedupe(
       artifactDir: ctx.resultsDir("dedupe"),
       artifactName: "dedupe",
       repairAttempts: sc.repairAttempts,
+      onActivity: st.onActivity,
     });
   } catch (e) {
     if (e instanceof AgentRunError || e instanceof TransientAgentError) {
-      log.warn(
+      st.warn(
         `[${ctx.runId}] dedupe failed: ${e.message} — treating each finding as its own group`,
       );
       // Fallback: one group per finding, all canonical.
@@ -79,7 +80,7 @@ export async function runDedupe(
     }
   }
 
-  log.info(
+  st.succeed(
     `[${ctx.runId}] dedupe: ${confirmed.length} findings → ${groups.length} groups`,
   );
   return groups.length;

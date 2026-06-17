@@ -22,7 +22,9 @@ export async function runRecon(
 
   const sc = ctx.stage("recon");
   const schema = ctx.schema("recon_output");
-  log.info(`[${ctx.runId}] recon: model=${sc.model} max_tasks=${maxTasks}`);
+  const st = log.stage(`[${ctx.runId}] recon`, {
+    detail: `model=${sc.model} max_tasks=${maxTasks}`,
+  });
 
   const result = await runAgent({
     stage: "recon",
@@ -43,6 +45,7 @@ export async function runRecon(
     artifactDir: ctx.resultsDir("recon"),
     artifactName: "recon",
     repairAttempts: sc.repairAttempts,
+    onActivity: st.onActivity,
   });
 
   const payload = result.payload;
@@ -55,7 +58,7 @@ export async function runRecon(
     db.addTask(ctx.runId, task);
   }
 
-  log.info(
+  st.succeed(
     `[${ctx.runId}] recon done: subsystems=${(payload.subsystems ?? []).length} ` +
       `entry_points=${(payload.architecture?.entry_points ?? []).length} ` +
       `initial_tasks=${(payload.initial_tasks ?? []).length} cost=$${(result.costUsd ?? 0).toFixed(4)}`,

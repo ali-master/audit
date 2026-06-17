@@ -50,6 +50,9 @@ export async function runReport(
     return outPath;
   }
 
+  const st = log.stage(`[${ctx.runId}] report`, {
+    detail: `compiling ${ready.length} ready findings`,
+  });
   try {
     const result = await runAgent({
       stage: "report",
@@ -66,18 +69,19 @@ export async function runReport(
       artifactDir: ctx.resultsDir("report"),
       artifactName: "report_agent",
       repairAttempts: Math.max(sc.repairAttempts, 2), // report MUST validate
+      onActivity: st.onActivity,
     });
 
     db.recordCost(ctx.runId, "report", null, result.rawResultMessage);
     db.addArtifact(ctx.runId, "report", null, "jsonl", result.artifactPath);
     writeFileSync(outPath, JSON.stringify(result.payload, null, 2));
-    log.info(
+    st.succeed(
       `[${ctx.runId}] report: ${(result.payload.findings ?? []).length} findings written to ${outPath}`,
     );
     return outPath;
   } catch (e) {
     if (e instanceof AgentRunError || e instanceof TransientAgentError) {
-      log.error(
+      st.warn(
         `[${ctx.runId}] report agent failed: ${e.message} — emitting fallback report`,
       );
       const fallback = buildFallbackReport(ctx, reachable, target);

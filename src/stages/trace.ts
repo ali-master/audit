@@ -22,14 +22,17 @@ export async function runTrace(
   const sc = ctx.stage("trace");
   const schema = ctx.schema("trace");
   const reconSummary = db.getReconOutput(ctx.runId) ?? {};
-  log.info(
-    `[${ctx.runId}] trace: ${canonicals.length} canonicals ` +
-      `(concurrency=${sc.concurrency}, model=${sc.model})`,
-  );
+  const st = log.stage(`[${ctx.runId}] trace`, {
+    total: canonicals.length,
+    detail: `concurrency=${sc.concurrency} model=${sc.model}`,
+  });
   const counters = { reachable: 0, unreachable: 0, failed: 0 };
 
   const one = async (f: Finding): Promise<void> => {
-    if (db.getTrace(f.findingId) !== null) return; // already traced (resume)
+    if (db.getTrace(f.findingId) !== null) {
+      st.step(); // already traced (resume)
+      return;
+    }
     const userInput = {
       finding: f.rawJson,
       recon_summary: truncatedReconSummary(reconSummary),
@@ -52,6 +55,7 @@ export async function runTrace(
         artifactDir: ctx.resultsDir("trace"),
         artifactName: f.findingId,
         repairAttempts: sc.repairAttempts,
+        onActivity: (d) => st.update(`${f.findingId} · ${d}`),
       });
 
       db.addTrace(f.findingId, result.payload);
@@ -65,10 +69,12 @@ export async function runTrace(
       );
       if (result.payload.reachable) counters.reachable++;
       else counters.unreachable++;
+      st.step(`${f.findingId} → ${result.payload.reachable ? "reachable" : "unreachable"}`);
     } catch (e) {
       if (e instanceof AgentRunError || e instanceof TransientAgentError) {
         log.warn(`[${ctx.runId}] trace ${f.findingId} failed: ${e.message}`);
         counters.failed++;
+        st.step(`${f.findingId} failed`);
         // Conservative: mark unreachable on failure.
         db.addTrace(f.findingId, {
           finding_id: f.findingId,
@@ -90,7 +96,7 @@ export async function runTrace(
   };
 
   await mapWithConcurrency(canonicals, sc.concurrency, one);
-  log.info(
+  st.succeed(
     `[${ctx.runId}] trace: reachable=${counters.reachable} ` +
       `unreachable=${counters.unreachable} failed=${counters.failed}`,
   );

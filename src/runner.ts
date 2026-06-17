@@ -138,6 +138,12 @@ export interface RunAgentParams {
   repairAttempts?: number;
   transientRetries?: number;
   transientBaseDelay?: number;
+  /**
+   * Live-progress sink. Called with a short human description each time the
+   * agent acts (a tool call, a thought, a chunk of reasoning) so callers can
+   * stream what's happening on a single status line.
+   */
+  onActivity?: (detail: string) => void;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -191,6 +197,7 @@ async function runAgentOnce(params: RunAgentParams): Promise<AgentResult> {
     artifactDir,
     artifactName,
     repairAttempts = 1,
+    onActivity,
   } = params;
 
   mkdirSync(artifactDir, { recursive: true });
@@ -245,7 +252,7 @@ async function runAgentOnce(params: RunAgentParams): Promise<AgentResult> {
       options,
     }) as AsyncGenerator<SDKMessage>;
 
-    const drained = await drainTurn(stream, write);
+    const drained = await drainTurn(stream, write, onActivity);
     lastText = drained.text;
     lastResult = drained.result;
 
@@ -273,7 +280,8 @@ async function runAgentOnce(params: RunAgentParams): Promise<AgentResult> {
       const repairPrompt = buildRepairPrompt(errors, schemaName);
       write({ kind: "repair_request", text: repairPrompt.slice(0, 50_000) });
       promptQueue.push(repairPrompt);
-      const r = await drainTurn(stream, write);
+      onActivity?.("repairing schema-invalid output");
+      const r = await drainTurn(stream, write, onActivity);
       lastText = r.text;
       lastResult = r.result;
       if (lastResult.is_error) {
@@ -349,6 +357,7 @@ interface TurnResult {
 async function drainTurn(
   stream: AsyncGenerator<SDKMessage>,
   write: (obj: Json) => void,
+  onActivity?: (detail: string) => void,
 ): Promise<TurnResult> {
   let lastAssistantText = "";
   let result: Json = {};
@@ -363,6 +372,7 @@ async function drainTurn(
         .filter((b) => b.type === "text")
         .map((b) => b.text as string)
         .join("");
+      if (onActivity) reportActivity(blocks, onActivity);
     } else if (msg.type === "result") {
       result = resultToDict(msg);
       break;
@@ -436,6 +446,49 @@ function serializeMessage(msg: Json): Json {
     return { kind: "result", ...resultToDict(msg) };
   }
   return { kind: msg.type, ...msg };
+}
+
+/**
+ * Translate a turn's content blocks into a short, human-readable description
+ * of what the agent is currently doing, for the live status line. Reports the
+ * last meaningful block — tool calls win over prose, prose over silence.
+ */
+function reportActivity(
+  blocks: Json[],
+  onActivity: (detail: string) => void,
+): void {
+  let latest = "";
+  for (const b of blocks) {
+    if (b.type === "tool_use") {
+      latest = describeTool(b.name, b.input);
+    } else if (b.type === "text" && typeof b.text === "string" && b.text.trim()) {
+      latest = b.text.trim().replace(/\s+/g, " ");
+    } else if (b.type === "thinking") {
+      latest = "thinking…";
+    }
+  }
+  if (latest) onActivity(clip(latest, 72));
+}
+
+/** One-line summary of a tool call, e.g. `read src/app.ts` or `grep "token"`. */
+function describeTool(name: string, input: Json): string {
+  const tool = String(name ?? "tool").toLowerCase();
+  const i = input ?? {};
+  const target =
+    i.file_path ??
+    i.path ??
+    i.pattern ??
+    i.command ??
+    i.query ??
+    i.url ??
+    i.prompt ??
+    "";
+  const arg = target ? ` ${clip(String(target).replace(/\s+/g, " "), 48)}` : "";
+  return `${tool}${arg}`;
+}
+
+function clip(s: string, n: number): string {
+  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
 }
 
 function serializeBlock(b: Json): Json {
