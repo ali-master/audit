@@ -113,6 +113,8 @@ program
   .description(
     "audit — Cloudflare-style 8-stage vulnerability discovery agent.",
   )
+  // `-v` is already taken by --verbose, so version uses the capital `-V`.
+  .version(pkg.version, "-V, --version", "Print the audit version and exit.")
   .option("-v, --verbose", "DEBUG logging.")
   .hook("preAction", (thisCommand) => {
     setVerbose(Boolean(thisCommand.opts().verbose));
