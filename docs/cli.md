@@ -199,11 +199,15 @@ audit report --run-id my-run --serve              # → http://127.0.0.1:7878
 audit report --run-id my-run --serve --port 9000
 ```
 
-A local, zero-build web UI reading straight from SQLite. Filter by severity /
-reachability / status, inspect the call chain, and mark each finding
+A local, zero-build web UI reading straight from SQLite. It opens on a **live
+analytics dashboard** — finding/reachable/confirmed/triaged counts, average
+confidence, and severity / vulnerability-class / hottest-file distribution bars
+that recompute as you filter. Search and filter by severity, status, class,
+reachability, or canonical-only; sort any column; navigate with `j`/`k`. Inspect
+each finding's evidence and reachability call chain, and mark it
 **confirm / false-positive / won't-fix** — verdicts persist to the `triage`
-table. "Export baseline (suppressed)" downloads a baseline of everything you
-marked false-positive or won't-fix, so those stop alerting on the next run.
+table. "Export baseline" downloads a baseline of everything you marked
+false-positive or won't-fix, so those stop alerting on the next run.
 Binds to `127.0.0.1` by default (Ctrl-C to stop); `--host 0.0.0.0` exposes it on
 the network — there is no authentication, so the viewer warns when you do.
 
