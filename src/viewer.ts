@@ -11,8 +11,11 @@
  * markup, so safe-by-construction DOM building is mandatory, not optional.
  */
 
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import { baselineFromFindings } from "./baseline";
 import { log } from "./logger";
+import { RESULTS } from "./paths";
 import type { StateDB } from "./state";
 
 type Json = any;
@@ -35,17 +38,71 @@ export interface ViewerFinding {
   call_chain: Json[];
   triage_status: string;
   triage_note: string | null;
+  /** Code-grounded fix text (advise stage > report > raw finding), if any. */
+  recommendation: string | null;
+  /** Where the recommendation came from: "advise" | "report" | null. */
+  recommendation_source: string | null;
+  /** Root cause from the advise stage, when generated. */
+  root_cause: string | null;
+  /** Optional illustrative fixed-code snippet from the advise stage. */
+  fix_sketch: Json | null;
+  references: string[];
+  /** A concrete test the adversarial reviewer suggested to confirm the fix. */
+  suggested_test: string | null;
+  cwe: string | null;
+}
+
+interface ReportRec {
+  recommendation?: string;
+  cwe?: string;
+}
+
+/**
+ * Pull per-finding remediations from the run's report.json (the Report stage
+ * writes a tailored `recommendation` + `cwe` for reachable findings). Returns an
+ * empty map when no report exists yet.
+ */
+export function loadReportRecommendations(
+  runId: string,
+): Map<string, ReportRec> {
+  const out = new Map<string, ReportRec>();
+  const path = join(RESULTS, runId, "report", "report.json");
+  if (!existsSync(path)) return out;
+  try {
+    const report = JSON.parse(readFileSync(path, "utf8")) as Json;
+    for (const f of report.findings ?? [])
+      out.set(f.finding_id, { recommendation: f.recommendation, cwe: f.cwe });
+  } catch {
+    /* malformed report — fall back to class-based guidance client-side */
+  }
+  return out;
 }
 
 /** Shape every finding the run produced for the viewer (joins traces + triage). */
 export function buildViewerFindings(
   db: StateDB,
   runId: string,
+  recs: Map<string, ReportRec> = new Map(),
 ): ViewerFinding[] {
   const triage = db.getTriage(runId);
+  const remediations = db.getRemediations(runId);
   return db.getFindings(runId).map((f) => {
     const trace = db.getTrace(f.findingId);
     const t = triage[f.findingId];
+    const rec = recs.get(f.findingId);
+    const advice = remediations[f.findingId];
+
+    // Recommendation source priority: code-grounded advise > report > raw.
+    let recommendation: string | null = null;
+    let recommendation_source: string | null = null;
+    if (advice?.recommendation) {
+      recommendation = advice.recommendation;
+      recommendation_source = "advise";
+    } else if (rec?.recommendation ?? f.rawJson?.recommendation) {
+      recommendation = rec?.recommendation ?? f.rawJson?.recommendation;
+      recommendation_source = "report";
+    }
+
     return {
       finding_id: f.findingId,
       file: f.file,
@@ -64,6 +121,13 @@ export function buildViewerFindings(
       call_chain: trace?.call_chain ?? [],
       triage_status: t?.status ?? "new",
       triage_note: t?.note ?? null,
+      recommendation,
+      recommendation_source,
+      root_cause: advice?.root_cause ?? null,
+      fix_sketch: advice?.fix_sketch ?? null,
+      references: advice?.references ?? [],
+      suggested_test: f.validationJson?.suggested_test ?? null,
+      cwe: f.rawJson?.cwe ?? rec?.cwe ?? null,
     };
   });
 }
@@ -86,10 +150,22 @@ function json(body: unknown, init?: ResponseInit): Response {
  * Start the viewer. Returns a handle; the CLI keeps the process alive until
  * SIGINT, when `stop()` shuts the server down.
  */
+export interface ViewerOptions {
+  port?: number;
+  host?: string;
+  /**
+   * Optional on-demand remediation generator (wired by the CLI when auth is
+   * configured). Given a finding id it runs the advise agent, persists the
+   * result, and returns the remediation payload. Absent → the "Generate fix"
+   * button reports that advice must be generated from the CLI.
+   */
+  advisor?: (findingId: string) => Promise<Json>;
+}
+
 export function serveViewer(
   db: StateDB,
   runId: string,
-  opts: { port?: number; host?: string } = {},
+  opts: ViewerOptions = {},
 ): { url: string; stop: () => void } {
   const host = opts.host ?? "127.0.0.1";
   const run = db.getRun(runId);
@@ -108,7 +184,11 @@ export function serveViewer(
       }
 
       if (url.pathname === "/api/findings") {
-        const findings = buildViewerFindings(db, runId);
+        const findings = buildViewerFindings(
+          db,
+          runId,
+          loadReportRecommendations(runId),
+        );
         return json({
           run_id: runId,
           repo_path: repoPath,
@@ -132,6 +212,27 @@ export function serveViewer(
           );
         db.setTriage(runId, body.finding_id, body.status, body.note ?? null);
         return json({ ok: true });
+      }
+
+      // Generate code-grounded remediation for one finding, on demand.
+      if (url.pathname === "/api/advise" && req.method === "POST") {
+        if (!opts.advisor)
+          return json(
+            { error: "advice generation unavailable here — run `audit advise` from the CLI" },
+            { status: 501 },
+          );
+        const body = (await req.json().catch(() => null)) as Json;
+        if (!body?.finding_id)
+          return json({ error: "expected {finding_id}" }, { status: 400 });
+        try {
+          const remediation = await opts.advisor(body.finding_id);
+          return json({ ok: true, remediation });
+        } catch (e) {
+          return json(
+            { error: String((e as Error).message ?? e) },
+            { status: 500 },
+          );
+        }
       }
 
       // Build a baseline from everything triaged FP / won't-fix — the findings
@@ -272,6 +373,28 @@ function page(): string {
   code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
   .detail code { color:#c7d2fe; }
   pre { background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:13px; overflow:auto; white-space:pre-wrap; font-size:12.5px; }
+  .solution { background:linear-gradient(180deg, rgba(52,211,153,.06), var(--panel2)); border:1px solid var(--line);
+    border-left:3px solid var(--ok); border-radius:10px; padding:13px 15px; }
+  .solution .sol-rec { color:#eafff6; font-weight:600; margin:0 0 8px; }
+  .solution .sol-sum { color:var(--fg); margin:0; }
+  .solution ul.sol-steps { margin:8px 0 0; padding-left:18px; }
+  .solution ul.sol-steps li { margin:4px 0; font-size:13px; }
+  .solution .sol-verify { margin-top:11px; font-size:12.5px; color:var(--dim); }
+  .solution .sol-verify b { color:var(--fg); }
+  .solution .sol-ref { margin-top:9px; font-size:12px; color:var(--faint); }
+  a.cwe { color:var(--accent); text-decoration:none; } a.cwe:hover { text-decoration:underline; }
+  .sol-src { display:inline-block; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
+    padding:1px 6px; border-radius:999px; margin-bottom:8px; }
+  .sol-src.advise { background:rgba(52,211,153,.15); color:#6ee7b7; border:1px solid rgba(52,211,153,.4); }
+  .sol-src.report { background:rgba(129,140,248,.15); color:#c7d2fe; border:1px solid rgba(129,140,248,.4); }
+  .sol-rootcause { color:var(--dim); margin:0 0 8px; font-size:13px; }
+  .sol-rootcause b { color:var(--fg); }
+  .sol-empty { color:var(--dim); }
+  .genbtn { margin-top:10px; background:linear-gradient(90deg,var(--accent),var(--accent2)); color:#0b0f17;
+    border:0; border-radius:8px; padding:8px 14px; font-size:13px; font-weight:600; cursor:pointer; }
+  .genbtn:disabled { opacity:.6; cursor:default; }
+  .sol-err { color:var(--bad); font-size:12.5px; margin-top:8px; }
+  pre.sketch { margin-top:10px; }
   h2.dt { font-size:16px; margin:0 0 4px; }
   h3 { margin:18px 0 6px; font-size:11px; color:var(--faint); text-transform:uppercase; letter-spacing:.06em; }
   .meta { color:var(--dim); font-size:13px; margin:2px 0 10px; }
@@ -511,6 +634,11 @@ function showDetail(id){
   d.appendChild(el("h3",{text:"Evidence"}));
   d.appendChild(el("pre",{text:f.evidence}));
 
+  // Solution — code-grounded remediation generated by the advise agent (or the
+  // report). When none exists yet, offer to generate it on demand.
+  d.appendChild(el("h3",{text:"Solution"}));
+  d.appendChild(renderSolution(f));
+
   if (f.entry_points && f.entry_points.length){
     d.appendChild(el("h3",{text:"Entry points"}));
     var ul = el("ul",{class:"eps"});
@@ -530,6 +658,52 @@ async function triage(id, status){
   var f = DATA.find(function(x){ return x.finding_id===id; });
   if (f) f.triage_status = status;
   renderAll(); showDetail(id);
+}
+
+function cweLink(cwe){
+  if (!cwe || !/^CWE-[0-9]+$/.test(cwe)) return null;
+  var a = el("a",{class:"cwe", href:"https://cwe.mitre.org/data/definitions/"+cwe.slice(4)+".html", text:cwe});
+  a.target="_blank"; a.rel="noopener noreferrer"; return a;
+}
+function renderSolution(f){
+  var sol = el("div",{class:"solution"});
+  if (f.recommendation){
+    if (f.recommendation_source)
+      sol.appendChild(el("span",{class:"sol-src "+f.recommendation_source, text: f.recommendation_source==="advise"?"code-grounded fix":"from report"}));
+    if (f.root_cause) sol.appendChild(el("p",{class:"sol-rootcause"},[ el("b",{text:"Root cause: "}), f.root_cause ]));
+    sol.appendChild(el("p",{class:"sol-rec", text:f.recommendation}));
+    if (f.fix_sketch && f.fix_sketch.code) sol.appendChild(el("pre",{class:"sketch", text:f.fix_sketch.code}));
+    if (f.references && f.references.length){
+      sol.appendChild(el("div",{class:"sol-ref", text:"References:"}));
+      var ul = el("ul",{class:"sol-steps"});
+      f.references.forEach(function(r){ ul.appendChild(el("li",{text:r})); });
+      sol.appendChild(ul);
+    }
+  } else {
+    sol.appendChild(el("p",{class:"sol-empty", text:"No code-based fix generated yet — the advise agent reads the sink and writes a fix specific to this code."}));
+    var btn = el("button",{class:"genbtn", text:"Generate fix from code", onclick:function(){ genFix(f.finding_id, btn, sol); }});
+    sol.appendChild(btn);
+  }
+  if (f.suggested_test) sol.appendChild(el("div",{class:"sol-verify"},[ el("b",{text:"Verify the fix: "}), f.suggested_test ]));
+  var cl = cweLink(f.cwe);
+  if (cl) sol.appendChild(el("div",{class:"sol-ref"},[ "Reference: ", cl ]));
+  return sol;
+}
+async function genFix(id, btn, sol){
+  btn.disabled = true; btn.textContent = "Generating fix… (reading the code)";
+  try {
+    var res = await fetch("/api/advise",{ method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({ finding_id:id }) });
+    var data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || ("HTTP "+res.status));
+    var f = DATA.find(function(x){ return x.finding_id===id; });
+    var r = data.remediation || {};
+    if (f){ f.recommendation = r.recommendation || null; f.recommendation_source = "advise";
+      f.root_cause = r.root_cause || null; f.fix_sketch = r.fix_sketch || null; f.references = r.references || []; }
+    showDetail(id);
+  } catch (e) {
+    btn.disabled = false; btn.textContent = "Generate fix from code";
+    sol.appendChild(el("div",{class:"sol-err", text:String(e.message || e)}));
+  }
 }
 
 // keyboard: j/k or arrows move the selection through the visible list

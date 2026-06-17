@@ -60,6 +60,14 @@ stages:
     concurrency: 1
     tools: [Read, Grep, Glob, Bash]
     max_turns: 40
+  # `audit advise` — code-grounded remediation guidance per finding (read-only;
+  # the `fix` stage writes patches, this one explains the fix). Surfaced inline
+  # in the report and the triage viewer.
+  advise:
+    model: claude-sonnet-4-6
+    concurrency: 4
+    tools: [Read, Grep, Glob]
+    max_turns: 15
 
 # Bounded loops to prevent runaway cost
 loops:

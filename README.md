@@ -159,6 +159,7 @@ entry-point→sink path, not just the sink. See the [CLI reference](docs/cli.md)
 - ✅ **Baseline & delta** — fingerprint findings, suppress known ones, surface NEW/FIXED.
 - ✅ **SARIF + exit-code gating** — `--format sarif` and `--fail-on high` for CI / the GitHub Security tab.
 - ✅ **Auto-fix (opt-in)** — `audit fix` writes a minimal patch + regression test per reachable finding in an isolated worktree; `--open-pr` opens a draft PR (never auto-merges).
+- ✅ **Code-grounded fix guidance** — `audit advise` (and a "Generate fix" button in the viewer) reads the real sink and explains the fix for *your* code; the report surfaces it inline.
 - ✅ **Triage viewer** — `audit report --serve` is a local web UI to confirm / dismiss findings and export suppressions to a baseline.
 - ✅ **Cost observability** — `audit stats` breaks spend down by stage/model and reports cost-per-finding.
 - ✅ **Bug-bounty / VDP triage** — `audit triage --report` reproduces an inbound submission, then runs it through the adversarial reviewer + reachability gate and dedupes it, emitting an accept/reject/duplicate verdict.

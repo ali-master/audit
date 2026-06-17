@@ -3,6 +3,13 @@
  * invoked by the orchestrator.
  */
 
+export {
+  adviseFinding,
+  adviseOne,
+  type AdviseOptions,
+  type AdviseSummary,
+  runAdvise,
+} from "./advise";
 export { type LiveTarget, StageContext } from "./common";
 export { runDedupe } from "./dedupe";
 export { runFeedback } from "./feedback";

@@ -116,6 +116,15 @@ const SCHEMA_STATEMENTS = [
     command TEXT,
     started_at REAL NOT NULL
   )`,
+  // Code-grounded remediation advice per finding (the `advise` stage). One row
+  // per finding; the report and viewer read from here.
+  `CREATE TABLE IF NOT EXISTS remediations (
+    finding_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    recommendation TEXT NOT NULL,
+    raw_json TEXT NOT NULL,
+    created_at REAL NOT NULL
+  )`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_run_status ON tasks(run_id, status)`,
   `CREATE INDEX IF NOT EXISTS idx_findings_run ON findings(run_id)`,
   `CREATE INDEX IF NOT EXISTS idx_findings_validation ON findings(validation_status)`,
@@ -608,6 +617,43 @@ export class StateDB {
     const out: Record<string, TriageRow> = {};
     for (const r of rows)
       out[r.finding_id] = { status: r.status, note: r.note };
+    return out;
+  }
+
+  // ---------- remediations (code-grounded fix advice) ----------
+
+  setRemediation(runId: string, findingId: string, payload: Json): void {
+    this.db.run(
+      `INSERT INTO remediations (finding_id, run_id, recommendation, raw_json, created_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(finding_id) DO UPDATE SET
+         recommendation = excluded.recommendation,
+         raw_json = excluded.raw_json,
+         created_at = excluded.created_at`,
+      [
+        findingId,
+        runId,
+        String(payload.recommendation ?? ""),
+        JSON.stringify(payload),
+        now(),
+      ],
+    );
+  }
+
+  getRemediation(findingId: string): Json | null {
+    const row = this.db
+      .query("SELECT raw_json FROM remediations WHERE finding_id = ?")
+      .get(findingId) as { raw_json: string } | undefined;
+    return row ? JSON.parse(row.raw_json) : null;
+  }
+
+  /** Map of finding_id → remediation payload for a run. */
+  getRemediations(runId: string): Record<string, Json> {
+    const rows = this.db
+      .query("SELECT finding_id, raw_json FROM remediations WHERE run_id = ?")
+      .all(runId) as Array<{ finding_id: string; raw_json: string }>;
+    const out: Record<string, Json> = {};
+    for (const r of rows) out[r.finding_id] = JSON.parse(r.raw_json);
     return out;
   }
 

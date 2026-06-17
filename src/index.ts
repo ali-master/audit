@@ -51,8 +51,13 @@ export {
 } from "./runner";
 export { type SarifOptions, toSarif } from "./sarif";
 export {
+  adviseFinding,
+  adviseOne,
+  type AdviseOptions,
+  type AdviseSummary,
   composeVerdict,
   type LiveTarget,
+  runAdvise,
   runTriage,
   StageContext,
   type TriageOptions,

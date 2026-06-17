@@ -15,6 +15,7 @@ Commands:
   report [options]       Print, convert, gate, or triage (--serve) the report
   baseline [options]     Generate a baseline file from a run's report
   fix [options]          Stage 9 (opt-in): patch confirmed + reachable findings
+  advise [options]       Generate code-grounded fix guidance per finding
   stats [options]        Cost & token breakdown by stage/model, cost-per-finding
   triage [options]       Triage an inbound bug-bounty / VDP report
 ```
@@ -206,8 +207,11 @@ that recompute as you filter. Search and filter by severity, status, class,
 reachability, or canonical-only; sort any column; navigate with `j`/`k`. Inspect
 each finding's evidence and reachability call chain, and mark it
 **confirm / false-positive / won't-fix** — verdicts persist to the `triage`
-table. "Export baseline" downloads a baseline of everything you marked
-false-positive or won't-fix, so those stop alerting on the next run.
+table. Each finding's **Solution** box shows code-grounded fix guidance from
+`audit advise` (or the report); when none exists yet, a **Generate fix** button
+produces it on the spot (requires auth — add `--allow-api-key` if you rely on
+`ANTHROPIC_API_KEY`). "Export baseline" downloads a baseline of everything you
+marked false-positive or won't-fix, so those stop alerting on the next run.
 Binds to `127.0.0.1` by default (Ctrl-C to stop); `--host 0.0.0.0` exposes it on
 the network — there is no authentication, so the viewer warns when you do.
 
@@ -258,6 +262,36 @@ audit fix --run-id my-run --open-pr             # + push and open a DRAFT PR via
 **Human-in-the-loop by design:** patches are never auto-applied without
 `--apply`, `--open-pr` opens a **draft** PR and never merges, and `--apply`
 refuses to run on a dirty working tree. Review every hunk.
+
+---
+
+## `advise`
+
+Generates **code-grounded fix guidance** per finding. An agent reads the actual
+sink and call chain and writes a recommendation specific to your code — the real
+function, the framework's safe API, the exact change — not generic boilerplate.
+Read-only (it explains the fix; `fix` writes the patch). The result is stored
+and surfaced by `audit report` and the triage viewer.
+
+```bash
+audit advise --run-id my-run                  # reachable findings (default)
+audit advise --run-id my-run --scope all      # every finding
+audit advise --run-id my-run --finding f_ab12 # just one
+```
+
+| Flag | Description |
+|------|-------------|
+| `--run-id <id>` | **Required.** Run to advise |
+| `--repo <path>` | Target repo (default: current directory) |
+| `--scope <scope>` | `reachable` (default), `confirmed`, or `all` |
+| `--finding <id>` | Advise a single finding (overrides `--scope`) |
+| `--force` | Regenerate even if advice already exists |
+| `--config <path>` | Override `config/stages.yaml` |
+| `--allow-api-key` | Honor `ANTHROPIC_API_KEY` for metered billing |
+
+The viewer (`report --serve`) can also generate this on demand per finding via a
+**Generate fix** button when auth is configured (`report --serve --allow-api-key`
+if you rely on `ANTHROPIC_API_KEY`).
 
 ---
 

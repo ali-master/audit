@@ -23,7 +23,13 @@ import { setVerbose, log } from "./logger";
 import { runPipeline, CostExceeded } from "./orchestrator";
 import { RESULTS, DB_PATH } from "./paths";
 import { toSarif } from "./sarif";
-import { StageContext, runTriage, runFix } from "./stages";
+import {
+  StageContext,
+  runTriage,
+  runFix,
+  runAdvise,
+  adviseFinding,
+} from "./stages";
 import type { TriageVerdict } from "./stages";
 import { computeStats } from "./stats";
 import type { Stats } from "./stats";
@@ -516,9 +522,17 @@ program
     "--host <host>",
     "Bind host for --serve (default 127.0.0.1; use 0.0.0.0 to expose on the network).",
   )
+  .option(
+    "--allow-api-key",
+    "Honor ANTHROPIC_API_KEY (enables the viewer's on-demand 'Generate fix').",
+  )
   .action((opts) => {
     if (opts.serve) {
-      serveTriage(opts.runId, { port: opts.port, host: opts.host });
+      serveTriage(opts.runId, {
+        port: opts.port,
+        host: opts.host,
+        allowApiKey: Boolean(opts.allowApiKey),
+      });
       return;
     }
     if (!["json", "md", "sarif"].includes(opts.format)) {
@@ -528,6 +542,20 @@ program
     validateFailOn(opts.failOn);
 
     let payload = loadReportOrExit(opts.runId);
+    // Prefer code-grounded advise recommendations when they exist, so the
+    // report stays consistent with the viewer and `audit advise`.
+    {
+      const db = new StateDB(DB_PATH);
+      try {
+        const rem = db.getRemediations(opts.runId);
+        for (const f of payload.findings ?? []) {
+          const r = rem[f.finding_id];
+          if (r?.recommendation) f.recommendation = r.recommendation;
+        }
+      } finally {
+        db.close();
+      }
+    }
     let delta: Delta | null = null;
 
     if (opts.baseline) {
@@ -663,6 +691,69 @@ program
       log.info(
         `review patches in ${join(RESULTS, opts.runId, "fix")} — re-run with --apply to land them on a branch`,
       );
+    }
+  });
+
+// ---------------- advise (code-grounded fix recommendations) ----------------
+
+program
+  .command("advise")
+  .description(
+    "Generate code-grounded remediation guidance per finding (read-only). Surfaced in `report` and the viewer.",
+  )
+  .requiredOption("--run-id <id>")
+  .option(
+    "--repo <path>",
+    "Path to the target source repo (default: current directory).",
+    process.cwd(),
+  )
+  .option(
+    "--scope <scope>",
+    "Which findings to advise: reachable | confirmed | all (default reachable).",
+    "reachable",
+  )
+  .option("--finding <id>", "Advise a single finding (overrides --scope).")
+  .option("--force", "Regenerate advice even if it already exists.")
+  .option("--config <path>", "Override config/stages.yaml.")
+  .option("--allow-api-key", "Honor ANTHROPIC_API_KEY for metered billing.")
+  .action(async (opts) => {
+    if (!["reachable", "confirmed", "all"].includes(opts.scope)) {
+      log.error("invalid --scope; use reachable, confirmed, or all");
+      process.exit(2);
+    }
+    const allow = allowApiKeyFromEnvOrFlag(Boolean(opts.allowApiKey));
+    try {
+      configureAuth({ allowApiKey: allow });
+    } catch (e) {
+      if (e instanceof AuthError) {
+        log.error(`auth error: ${e.message}`);
+        process.exit(2);
+      }
+      throw e;
+    }
+    const repoPath = resolve(opts.repo);
+    if (!existsSync(repoPath)) {
+      log.error(`--repo path does not exist: ${repoPath}`);
+      process.exit(2);
+    }
+    const config = opts.config ? loadConfig(opts.config) : loadConfig();
+    const db = new StateDB(DB_PATH);
+    try {
+      if (db.getRun(opts.runId) === null) {
+        log.error(`unknown run_id ${JSON.stringify(opts.runId)}`);
+        process.exit(1);
+      }
+      const ctx = new StageContext(opts.runId, repoPath, config);
+      const summary = await runAdvise(ctx, db, {
+        scope: opts.scope,
+        findingId: opts.finding,
+        force: Boolean(opts.force),
+      });
+      log.success(
+        `advise: ${summary.advised} recommendation(s) written, ${summary.failed} failed`,
+      );
+    } finally {
+      db.close();
     }
   });
 
@@ -824,15 +915,32 @@ program
 
 function serveTriage(
   runId: string,
-  opts: { port?: number; host?: string } = {},
+  opts: { port?: number; host?: string; allowApiKey?: boolean } = {},
 ): void {
   const db = new StateDB(DB_PATH);
-  if (db.getRun(runId) === null) {
+  const run = db.getRun(runId);
+  if (run === null) {
     log.error(`unknown run_id ${JSON.stringify(runId)}`);
     db.close();
     process.exit(1);
   }
-  const server = serveViewer(db, runId, { port: opts.port, host: opts.host });
+
+  // Wire on-demand remediation ("Generate fix") only when auth is configured —
+  // otherwise the viewer still serves stored advice and points to `audit advise`.
+  let advisor: ((id: string) => Promise<Json>) | undefined;
+  try {
+    configureAuth({ allowApiKey: allowApiKeyFromEnvOrFlag(Boolean(opts.allowApiKey)) });
+    const ctx = new StageContext(runId, run.repo_path, loadConfig());
+    advisor = (id: string) => adviseFinding(ctx, db, id);
+  } catch {
+    log.info("viewer: auth not configured — 'Generate fix' disabled (use `audit advise`)");
+  }
+
+  const server = serveViewer(db, runId, {
+    port: opts.port,
+    host: opts.host,
+    advisor,
+  });
   const shutdown = () => {
     server.stop();
     db.close();
