@@ -15,6 +15,7 @@ Commands:
   baseline [options]     Generate a baseline file from a run's report
   fix [options]          Stage 9 (opt-in): patch confirmed + reachable findings
   stats [options]        Cost & token breakdown by stage/model, cost-per-finding
+  triage [options]       Triage an inbound bug-bounty / VDP report
 ```
 
 > **Running from source instead?** Swap `audit` for `bun run src/cli.ts` in any
@@ -248,6 +249,45 @@ audit stats --run-id my-run --json     # machine-readable
 | `--run-id <id>` | **Required.** Which run to break down |
 | `--config <path>` | Override `config/stages.yaml` (for the stage→model mapping) |
 | `--json` | Emit the raw stats object as JSON |
+
+---
+
+## `triage` (bug-bounty / VDP intake)
+
+Triage an inbound researcher submission. The intake agent **reproduces** the
+claim against the real code; the existing **Validate** stage (a *different*
+model, paid in rejections) then plays the skeptical reviewer; the **Trace** gate
+asks whether an attacker can actually reach the sink; and the finding is
+**deduped** against your known issues. Out comes one verdict —
+`accept` / `reject` / `duplicate` / `needs_info` / `not_reproduced` — with the
+trace attached. Needs a target repo and auth.
+
+```bash
+audit triage --report submission.md                       # text verdict
+audit triage --report submission.md --against my-last-scan # dedupe vs a prior run
+audit triage --report - --format json < submission.md      # stdin → JSON
+audit triage --report s.md --target-url http://localhost:8888 \
+  --target-creds email=admin@x --target-creds password=…   # reproduce live
+```
+
+| Flag | Description |
+|------|-------------|
+| `--report <path>` | **Required.** Researcher submission (text/markdown); `-` for stdin |
+| `--repo <path>` | Target repo (default: current directory) |
+| `--run-id <id>` | Triage run id (default: random `triage_xxxxxxxx`) |
+| `--against <run-id>` | Dedupe against a prior run + borrow its architecture map for tracing |
+| `--baseline <path>` | Also dedupe against this baseline file |
+| `--target-url <url>` | Live deployment the agent may hit to reproduce ([live target](live-target.md)) |
+| `--target-creds <KEY=VALUE>` | Credentials for the live target (repeatable) |
+| `--format <fmt>` | `text` (default) or `json` |
+| `--config <path>` | Override `config/stages.yaml` |
+| `--allow-api-key` | Honor `ANTHROPIC_API_KEY` for metered billing |
+
+The full verdict (finding, adversarial review, trace, dedupe match) is written
+to `results/<run-id>/triage/verdict.json`. The reachability gate is decisive: a
+confirmed-but-unreachable claim is recommended `reject` (real defect, but out of
+scope for an external report) — exactly the "can't reach this, likely invalid"
+signal a triager needs.
 
 ---
 

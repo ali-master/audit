@@ -50,5 +50,12 @@ export {
   TransientAgentError,
 } from "./runner";
 export { type SarifOptions, toSarif } from "./sarif";
-export { type LiveTarget, StageContext } from "./stages";
+export {
+  composeVerdict,
+  type LiveTarget,
+  runTriage,
+  StageContext,
+  type TriageOptions,
+  type TriageVerdict,
+} from "./stages";
 export { type Finding, type RunRow, StateDB, type Task } from "./state";

@@ -12,4 +12,10 @@ export { type BudgetCheck, runHunt } from "./hunt";
 export { runRecon } from "./recon";
 export { runReport } from "./report";
 export { runTrace } from "./trace";
+export {
+  composeVerdict,
+  runTriage,
+  type TriageOptions,
+  type TriageVerdict,
+} from "./triage";
 export { runValidate } from "./validate";

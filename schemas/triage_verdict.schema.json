@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TriageVerdict",
+  "description": "Triage outcome for one inbound bug-bounty / VDP submission: reproduced?, valid? (adversarial review), reachable? (gate), duplicate?, and a recommendation.",
+  "type": "object",
+  "required": ["run_id", "source", "target", "reproduced", "recommendation", "validity", "rationale"],
+  "additionalProperties": false,
+  "properties": {
+    "run_id": { "type": "string" },
+    "source": { "type": "string", "description": "Where the report came from (file path or label)." },
+    "target": {
+      "type": "object",
+      "required": ["repo_path"],
+      "additionalProperties": false,
+      "properties": { "repo_path": { "type": "string" } }
+    },
+    "reproduced": { "type": "boolean" },
+    "recommendation": {
+      "type": "string",
+      "enum": ["accept", "reject", "duplicate", "needs_info", "not_reproduced"]
+    },
+    "validity": {
+      "type": "string",
+      "enum": ["valid", "invalid", "needs_more_info", "not_reproduced"],
+      "description": "Verdict of the independent adversarial reviewer."
+    },
+    "reachable": {
+      "type": ["boolean", "null"],
+      "description": "Reachability-gate result; null when not reproduced or not traced."
+    },
+    "severity": {
+      "type": ["string", "null"],
+      "enum": ["critical", "high", "medium", "low", "informational", null]
+    },
+    "duplicate_of": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["finding_id", "source", "fingerprint"],
+      "properties": {
+        "finding_id": { "type": "string" },
+        "source": { "type": "string", "description": "run:<id> or baseline:<path>" },
+        "fingerprint": { "type": "string" }
+      }
+    },
+    "fingerprint": { "type": ["string", "null"] },
+    "rationale": { "type": "string", "minLength": 10 },
+    "finding": { "type": ["object", "null"] },
+    "validation": { "type": ["object", "null"] },
+    "trace": { "type": ["object", "null"] }
+  }
+}

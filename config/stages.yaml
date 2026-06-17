@@ -52,6 +52,14 @@ stages:
     concurrency: 3
     tools: [Read, Grep, Glob, Bash, Edit, Write]
     max_turns: 40
+  # `audit triage` — reproduce an inbound bug-bounty/VDP report. Hunt-like
+  # reproduction on Sonnet; the adversarial Validate stage (Opus) then plays the
+  # skeptical triager, so this stage just needs to reproduce faithfully.
+  triage:
+    model: claude-sonnet-4-6
+    concurrency: 1
+    tools: [Read, Grep, Glob, Bash]
+    max_turns: 40
 
 # Bounded loops to prevent runaway cost
 loops:

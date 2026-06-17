@@ -17,9 +17,10 @@ import { setVerbose, log } from "./logger";
 import { runPipeline, CostExceeded } from "./orchestrator";
 import { RESULTS, DB_PATH } from "./paths";
 import { toSarif } from "./sarif";
-import { StageContext, runFix } from "./stages";
-import {  computeStats } from "./stats";
-import type {Stats} from "./stats";
+import { StageContext, runTriage, runFix } from "./stages";
+import type { TriageVerdict } from "./stages";
+import { computeStats } from "./stats";
+import type { Stats } from "./stats";
 import { StateDB } from "./state";
 import { serveViewer } from "./viewer";
 import updateNotifier from "update-notifier";
@@ -611,6 +612,128 @@ program
     }
   });
 
+// ---------------- triage (bug-bounty / VDP intake) ----------------
+
+program
+  .command("triage")
+  .description(
+    "Triage an inbound bug-bounty / VDP report: reproduce, adversarially review, gate on reachability, dedupe.",
+  )
+  .requiredOption(
+    "--report <path>",
+    "Path to the researcher submission (text/markdown); use - for stdin.",
+  )
+  .option(
+    "--repo <path>",
+    "Path to the target source repo (default: current directory).",
+    process.cwd(),
+  )
+  .option("--run-id <id>", "Triage run identifier (default: random).")
+  .option(
+    "--against <run-id>",
+    "Dedupe against a prior run's findings, and borrow its architecture map for tracing.",
+  )
+  .option("--baseline <path>", "Also dedupe against this baseline file.")
+  .option("--target-url <url>", "Live deployment the agent may hit to reproduce.")
+  .option(
+    "--target-creds <kv>",
+    "Credentials for the live target as KEY=VALUE (repeatable).",
+    collect,
+    [] as string[],
+  )
+  .option("--format <fmt>", "Verdict output: text | json.", "text")
+  .option("--config <path>", "Override config/stages.yaml.")
+  .option("--allow-api-key", "Honor ANTHROPIC_API_KEY for metered billing.")
+  .action(async (opts) => {
+    if (!["text", "json"].includes(opts.format)) {
+      log.error("invalid --format; use text or json");
+      process.exit(2);
+    }
+    const allow = allowApiKeyFromEnvOrFlag(Boolean(opts.allowApiKey));
+    try {
+      configureAuth({ allowApiKey: allow });
+    } catch (e) {
+      if (e instanceof AuthError) {
+        log.error(`auth error: ${e.message}`);
+        process.exit(2);
+      }
+      throw e;
+    }
+
+    const repoPath = resolve(opts.repo);
+    if (!existsSync(repoPath)) {
+      log.error(`--repo path does not exist: ${repoPath}`);
+      process.exit(2);
+    }
+    const reportText =
+      opts.report === "-"
+        ? readFileSync(0, "utf8")
+        : existsSync(opts.report)
+          ? readFileSync(opts.report, "utf8")
+          : null;
+    if (reportText === null) {
+      log.error(`--report file not found: ${opts.report}`);
+      process.exit(2);
+    }
+    if (reportText.trim() === "") {
+      log.error("report is empty");
+      process.exit(2);
+    }
+
+    const config = opts.config ? loadConfig(opts.config) : loadConfig();
+
+    // Live-target plumbing (optional, for runtime reproduction).
+    let liveTarget: Json = null;
+    if (opts.targetUrl) {
+      const creds: Record<string, string> = {};
+      for (const kv of opts.targetCreds as string[]) {
+        const idx = kv.indexOf("=");
+        if (idx < 0) {
+          log.error(`invalid --target-creds ${JSON.stringify(kv)} — expected KEY=VALUE`);
+          process.exit(2);
+        }
+        creds[kv.slice(0, idx).trim()] = kv.slice(idx + 1).trim();
+      }
+      liveTarget = { url: opts.targetUrl, credentials: creds };
+    }
+
+    let baseline = null;
+    if (opts.baseline) {
+      if (!existsSync(opts.baseline)) {
+        log.error(`--baseline file not found: ${opts.baseline}`);
+        process.exit(2);
+      }
+      baseline = parseBaseline(readFileSync(opts.baseline, "utf8"));
+    }
+
+    const runId = opts.runId || `triage_${shortId()}`;
+    const db = new StateDB(DB_PATH);
+    let verdict: TriageVerdict;
+    try {
+      db.createRun(repoPath, runId);
+      if (opts.against && db.getRun(opts.against) === null) {
+        log.warn(`--against run ${JSON.stringify(opts.against)} not found — skipping cross-run dedupe`);
+        opts.against = undefined;
+      }
+      const ctx = new StageContext(runId, repoPath, config, liveTarget);
+      verdict = await runTriage(ctx, db, {
+        reportText,
+        reportSource: opts.report === "-" ? "(stdin)" : opts.report,
+        knownRunId: opts.against ?? null,
+        baseline,
+        baselinePath: opts.baseline ?? null,
+      });
+    } finally {
+      db.close();
+    }
+
+    if (opts.format === "json") {
+      process.stdout.write(`${JSON.stringify(verdict, null, 2)}\n`);
+    } else {
+      renderTriageVerdict(verdict);
+    }
+  });
+
 // ---------------- shared: triage viewer ----------------
 
 function serveTriage(runId: string, port?: number): void {
@@ -767,6 +890,39 @@ function showRunDetail(db: StateDB, runId: string): void {
   print("findings (canonical)", canonical.length);
   print("findings (reachable)", reachable.length);
   log.print(row(["total cost ($)", db.totalCost(runId).toFixed(4)], widths));
+}
+
+function renderTriageVerdict(v: TriageVerdict): void {
+  const color: Record<string, (s: string) => string> = {
+    accept: chalk.green,
+    reject: chalk.red,
+    duplicate: chalk.yellow,
+    needs_info: chalk.yellow,
+    not_reproduced: chalk.dim,
+  };
+  const tint = color[v.recommendation] ?? chalk.white;
+  log.print(chalk.bold(`triage verdict — ${v.run_id}`));
+  log.print(`  source        ${v.source}`);
+  log.print(`  recommendation ${tint(chalk.bold(v.recommendation.toUpperCase()))}`);
+  log.print(`  reproduced    ${v.reproduced ? chalk.green("yes") : chalk.dim("no")}`);
+  log.print(
+    `  validity      ${v.validity}${v.severity ? `   severity ${v.severity}` : ""}`,
+  );
+  log.print(
+    `  reachable     ${v.reachable === null ? chalk.dim("n/a") : v.reachable ? chalk.green("yes") : chalk.red("no")}`,
+  );
+  if (v.duplicate_of)
+    log.print(
+      `  duplicate of  ${chalk.yellow(v.duplicate_of.finding_id)} (${v.duplicate_of.source})`,
+    );
+  if (v.finding?.file)
+    log.print(`  location      ${v.finding.file}:${v.finding.line_start ?? "?"}`);
+  log.print(`  ${chalk.dim("rationale")}     ${v.rationale}`);
+  if (v.trace?.call_chain?.length) {
+    log.print(chalk.dim("  call chain:"));
+    for (const c of v.trace.call_chain)
+      log.print(chalk.dim(`    ${c.file}:${c.line} — ${c.function}()`));
+  }
 }
 
 function renderStats(s: Stats): void {
