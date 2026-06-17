@@ -52,14 +52,23 @@ const isTTY = Boolean(process.stdout.isTTY);
 // ---------------------------------------------------------------------------
 // 24-hour, local-timezone timestamp.
 // ---------------------------------------------------------------------------
-function stamp(): string {
-  const time = new Date().toLocaleTimeString(undefined, {
+function rawTime(): string {
+  return new Date().toLocaleTimeString(undefined, {
     hour12: false,
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
   });
-  return c.ts(time);
+}
+
+function stamp(): string {
+  return c.ts(rawTime());
+}
+
+/** Current terminal width, with a sane fallback for odd/unsized streams. */
+function columns(): number {
+  const cols = process.stdout.columns;
+  return cols && cols > 0 ? cols : 80;
 }
 
 /**
@@ -135,13 +144,34 @@ class Spinner {
   /** Redraw the live line in place. */
   render(): void {
     if (!isTTY || active !== this) return;
-    const spin = c.info(SPINNER_FRAMES[this.frame]);
-    const counter =
-      this.total !== null ? c.dim(` ${this.done}/${this.total}`) : "";
-    const detail = this.detail ? ` ${c.detail(this.detail)}` : "";
-    const elapsed = c.dim(` · ${this.elapsed()}`);
+
+    // Compute everything as plain text first so we can truncate to the
+    // terminal width. If the line is allowed to exceed the width the terminal
+    // soft-wraps it onto extra rows, and our in-place redraw (`\r` + erase-
+    // line) only clears the *last* row — leaving every wrapped row stuck on
+    // screen. That is what floods the output. Clamping the detail (the only
+    // unbounded segment) guarantees a single-row line that redraws cleanly.
+    const frame = SPINNER_FRAMES[this.frame];
+    const time = rawTime();
+    const counterText = this.total !== null ? ` ${this.done}/${this.total}` : "";
+    const elapsedText = ` · ${this.elapsed()}`;
+
+    // Fixed width: "<time> <frame> <title><counter>" + " <detail>" + "<elapsed>".
+    const fixed =
+      time.length + 1 + frame.length + 1 + this.title.length + counterText.length;
+    const budget = columns() - fixed - elapsedText.length - 1; // -1: space before detail
+
+    let detail = this.detail;
+    if (!detail || budget <= 1) {
+      detail = "";
+    } else if (detail.length > budget) {
+      detail = `${detail.slice(0, budget - 1)}…`;
+    }
+
+    const detailPart = detail ? ` ${c.detail(detail)}` : "";
     process.stdout.write(
-      `\r\x1B[2K${stamp()} ${spin} ${c.stage(this.title)}${counter}${detail}${elapsed}`,
+      `\r\x1B[2K${c.ts(time)} ${c.info(frame)} ${c.stage(this.title)}` +
+        `${c.dim(counterText)}${detailPart}${c.dim(elapsedText)}`,
     );
   }
 
