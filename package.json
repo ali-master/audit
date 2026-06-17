@@ -60,8 +60,7 @@
     "test:types": "tsc --noEmit",
     "format": "prettier --write \"**/*.ts\"",
     "lint": "eslint \"src/**/*.ts\"",
-    "lint:fix": "eslint \"src/**/*.ts\" --fix",
-    "preinstall": "bunx only-allow bun"
+    "lint:fix": "eslint \"src/**/*.ts\" --fix"
   },
   "devDependencies": {
     "@antfu/eslint-config": "^9.0.0",
