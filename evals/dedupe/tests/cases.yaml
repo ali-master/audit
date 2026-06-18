@@ -1,0 +1,150 @@
+# Dedupe test cases. Each `input` is the exact JSON the stage receives.
+# `expected_groups` / `must_group` / `must_separate` encode the ground truth
+# that assert-dedupe.js checks.
+
+# ── Case 1: same buggy helper, two call sites → ONE group ──────────────────
+# Both findings flow into the same archive_utils.safe_extract helper. A single
+# patch to that helper fixes both → one group. Canonical should be the one with
+# a succeeding PoC / higher confidence.
+- description: "two call sites of one buggy helper collapse to a single group"
+  vars:
+    expected_groups: 1
+    must_group: [["f_imp_1", "f_bkp_1"]]
+    input:
+      confirmed_findings:
+        - finding_id: "f_imp_1"
+          file: "services/import.py"
+          line_start: 40
+          line_end: 47
+          vuln_class: "zip_slip"
+          severity: "high"
+          confidence: 0.9
+          description: "User ZIP extracted via archive_utils.safe_extract which fails to canonicalize member paths."
+          evidence_snippet: "safe_extract(zf, dest)  # services/import.py:42 -> archive_utils.safe_extract"
+          poc: { language: "python", code: "...", succeeded: true }
+          validation: { verdict: "confirmed", validator_confidence: 0.88 }
+        - finding_id: "f_bkp_1"
+          file: "services/backup.py"
+          line_start: 85
+          line_end: 92
+          vuln_class: "zip_slip"
+          severity: "high"
+          confidence: 0.7
+          description: "Backup restore extracts attacker archive through the same archive_utils.safe_extract helper."
+          evidence_snippet: "safe_extract(zf, target)  # services/backup.py:88 -> archive_utils.safe_extract"
+          poc: { language: "python", code: "...", succeeded: false }
+          validation: { verdict: "confirmed", validator_confidence: 0.7 }
+  assert:
+    - type: javascript
+      value: |
+        const o = JSON.parse(output);
+        const g = o.groups.find(g => g.member_finding_ids.includes('f_imp_1'));
+        // canonical should prefer the finding with a succeeding PoC
+        g && g.canonical_finding_id === 'f_imp_1'
+          ? { pass: true, score: 1, reason: 'canonical = PoC-proven member' }
+          : { pass: false, score: 0, reason: `canonical=${g && g.canonical_finding_id}, expected f_imp_1` };
+
+# ── Case 2: structurally identical bug, different functions → TWO groups ────
+# Two independent f-string SQL queries in different repos. No shared helper —
+# each needs its own patch → two groups, NOT one.
+- description: "structurally-identical SQLi in different functions stay separate"
+  vars:
+    expected_groups: 2
+    must_separate: [["f_usr_1", "f_ord_1"]]
+    input:
+      confirmed_findings:
+        - finding_id: "f_usr_1"
+          file: "db/users.py"
+          line_start: 42
+          line_end: 42
+          vuln_class: "sql_injection"
+          severity: "high"
+          confidence: 0.85
+          description: "UserRepo.find builds query via f-string interpolating the name parameter directly."
+          evidence_snippet: 'cur.execute(f"SELECT * FROM users WHERE name = \x27{name}\x27")  # db/users.py:42'
+          poc: { language: "python", code: "...", succeeded: true }
+          validation: { verdict: "confirmed", validator_confidence: 0.85 }
+        - finding_id: "f_ord_1"
+          file: "db/orders.py"
+          line_start: 71
+          line_end: 71
+          vuln_class: "sql_injection"
+          severity: "high"
+          confidence: 0.8
+          description: "OrderRepo.search builds a separate query via f-string interpolating the q parameter."
+          evidence_snippet: 'cur.execute(f"SELECT * FROM orders WHERE note LIKE \x27%{q}%\x27")  # db/orders.py:71'
+          poc: { language: "python", code: "...", succeeded: true }
+          validation: { verdict: "confirmed", validator_confidence: 0.8 }
+
+# ── Case 3: mixed — one shared-helper pair + two unrelated singletons ───────
+# 4 findings → 3 groups: {f_pt_1,f_pt_2} share path_join, f_ssrf_1 alone,
+# f_xxe_1 alone. Exercises partition completeness across a larger set.
+- description: "mixed set partitions into one pair group + two singletons"
+  vars:
+    expected_groups: 3
+    must_group: [["f_pt_1", "f_pt_2"]]
+    must_separate: [["f_pt_1", "f_ssrf_1"], ["f_ssrf_1", "f_xxe_1"]]
+    input:
+      confirmed_findings:
+        - finding_id: "f_pt_1"
+          file: "api/files.py"
+          line_start: 30
+          line_end: 34
+          vuln_class: "path_traversal"
+          severity: "high"
+          confidence: 0.9
+          description: "Download route joins user path via the shared utils.path_join helper without canonicalization."
+          evidence_snippet: "open(path_join(BASE, user_path))  # api/files.py:32 -> utils.path_join"
+          poc: { language: "python", code: "...", succeeded: true }
+          validation: { verdict: "confirmed", validator_confidence: 0.9 }
+        - finding_id: "f_pt_2"
+          file: "api/avatars.py"
+          line_start: 50
+          line_end: 54
+          vuln_class: "path_traversal"
+          severity: "medium"
+          confidence: 0.75
+          description: "Avatar route reaches the filesystem through the same utils.path_join helper with user input."
+          evidence_snippet: "open(path_join(AVA, name))  # api/avatars.py:52 -> utils.path_join"
+          poc: { language: "python", code: "...", succeeded: false }
+          validation: { verdict: "confirmed", validator_confidence: 0.72 }
+        - finding_id: "f_ssrf_1"
+          file: "api/webhook.py"
+          line_start: 18
+          line_end: 22
+          vuln_class: "ssrf"
+          severity: "high"
+          confidence: 0.8
+          description: "Webhook handler fetches a user-supplied URL with no host allowlist, reaching internal services."
+          evidence_snippet: "requests.get(payload['url'])  # api/webhook.py:20"
+          poc: { language: "python", code: "...", succeeded: true }
+          validation: { verdict: "confirmed", validator_confidence: 0.8 }
+        - finding_id: "f_xxe_1"
+          file: "parsers/feed.py"
+          line_start: 60
+          line_end: 64
+          vuln_class: "xxe"
+          severity: "medium"
+          confidence: 0.7
+          description: "Feed parser uses lxml with resolve_entities enabled on attacker-supplied XML."
+          evidence_snippet: "etree.parse(body, parser=lxml_parser)  # parsers/feed.py:62"
+          poc: { language: "python", code: "...", succeeded: false }
+          validation: { verdict: "confirmed", validator_confidence: 0.68 }
+
+# ── Case 4: singleton ──────────────────────────────────────────────────────
+- description: "single finding yields a single one-member group"
+  vars:
+    expected_groups: 1
+    input:
+      confirmed_findings:
+        - finding_id: "f_solo_1"
+          file: "auth/login.py"
+          line_start: 12
+          line_end: 18
+          vuln_class: "auth_bypass"
+          severity: "critical"
+          confidence: 0.95
+          description: "Login compares password with == allowing timing leak and empty-hash bypass when stored hash is null."
+          evidence_snippet: "if user.pw == supplied:  # auth/login.py:14"
+          poc: { language: "python", code: "...", succeeded: true }
+          validation: { verdict: "confirmed", validator_confidence: 0.9 }

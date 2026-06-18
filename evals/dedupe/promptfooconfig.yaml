@@ -1,0 +1,43 @@
+# yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
+
+# EVAL QUESTION: Given a set of confirmed findings, does the Dedupe stage
+# (prompts/05-dedupe.md) cluster strictly by ROOT CAUSE — different call sites
+# of the same buggy helper collapse into one group, structurally-identical bugs
+# in different functions stay separate — while partitioning EVERY finding into
+# exactly one group and emitting schema-valid JSON?
+#
+# Run from the repo root:
+#   ANTHROPIC_API_KEY=... npx promptfoo@latest eval \
+#     -c evals/dedupe/promptfooconfig.yaml \
+#     -o /tmp/dedupe-eval.json --no-cache --no-share
+
+description: "Audit pipeline — Stage 05 Dedupe: root-cause clustering"
+
+prompts:
+  - file://../lib/stage-prompt.cjs
+
+providers:
+  - "anthropic:messages:claude-opus-4-8"
+  - "anthropic:messages:claude-sonnet-4-6"
+
+defaultTest:
+  vars:
+    stageFile: prompts/05-dedupe.md
+  options:
+    # Strip any stray fence and isolate the JSON before asserting.
+    transform: file://../lib/extract-json.cjs
+  assert:
+    # 1. Universal: output must validate against the shipped schema.
+    - type: is-json
+      value: file://../../schemas/dedupe_output.schema.json
+
+    # 2. Partition completeness + clustering correctness, computed from the
+    #    test's own input + expectations. One JS assertion covers every case.
+    - type: javascript
+      value: file://./assert-dedupe.cjs
+
+    # 3. Cheap sanity gate: no markdown prose leaked through.
+    - type: not-icontains
+      value: "```"
+
+tests: file://tests/cases.yaml

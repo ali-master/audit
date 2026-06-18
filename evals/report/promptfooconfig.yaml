@@ -1,0 +1,40 @@
+# yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
+
+# EVAL QUESTION: Given ready findings (each carrying a reachability trace), does
+# the Report stage (prompts/08-report.md) emit schema-valid JSON that (a) ships
+# ONLY reachable findings, (b) drops unreachable ones, (c) downgrades severity
+# one step when reachability requires admin auth, and (d) keeps summary counts
+# internally consistent?
+#
+# Run from the repo root:
+#   ANTHROPIC_API_KEY=... npx promptfoo@latest eval \
+#     -c evals/report/promptfooconfig.yaml \
+#     -o /tmp/report-eval.json --no-cache --no-share
+
+description: "Audit pipeline — Stage 08 Report: reachable-only, consistent counts"
+
+prompts:
+  - file://../lib/stage-prompt.cjs
+
+providers:
+  - "anthropic:messages:claude-opus-4-8"
+  - "anthropic:messages:claude-sonnet-4-6"
+
+defaultTest:
+  vars:
+    stageFile: prompts/08-report.md
+  options:
+    transform: file://../lib/extract-json.cjs
+  assert:
+    # 1. Universal: validates against the shipped report schema.
+    - type: is-json
+      value: file://../../schemas/report.schema.json
+
+    # 2. Behavioral: reachable-only inclusion, count consistency, severity rules.
+    - type: javascript
+      value: file://./assert-report.cjs
+
+    - type: not-icontains
+      value: "```"
+
+tests: file://tests/cases.yaml

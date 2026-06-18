@@ -1,0 +1,156 @@
+# Report test cases. Each `input` is the exact JSON the stage receives.
+# assert-report.js enforces reachable-only inclusion, count consistency, and
+# severity overrides against these expectations.
+
+# ── Case A: both findings reachable → both ship ────────────────────────────
+- description: "two reachable findings both appear with consistent counts"
+  vars:
+    expected_findings: 2
+    input:
+      run_id: "run_a"
+      target: { repo_path: "/srv/app", commit: "abc123" }
+      ready_findings:
+        - finding:
+            finding_id: "f_sqli_1"
+            file: "db/users.py"
+            line_start: 42
+            line_end: 42
+            vuln_class: "sql_injection"
+            severity: "high"
+            description: "UserRepo.find interpolates name into the SQL string via f-string."
+            evidence_snippet: 'cur.execute(f"SELECT * FROM users WHERE name=\x27{name}\x27")'
+            confidence: 0.9
+          validation: { verdict: "confirmed", validator_confidence: 0.88 }
+          trace:
+            finding_id: "f_sqli_1"
+            reachable: true
+            confidence: 0.85
+            rationale: "GET /users?name= flows unauthenticated into UserRepo.find."
+            entry_points:
+              - { kind: "http_route", location: "api/users.py:10", controllable_by: "anonymous_user" }
+            call_chain:
+              - { file: "api/users.py", function: "list_users", line: 10 }
+              - { file: "db/users.py", function: "find", line: 42 }
+          variants: []
+        - finding:
+            finding_id: "f_pt_1"
+            file: "api/files.py"
+            line_start: 32
+            line_end: 34
+            vuln_class: "path_traversal"
+            severity: "medium"
+            description: "Download route opens a user-controlled path without canonicalization."
+            evidence_snippet: "open(os.path.join(BASE, user_path))"
+            confidence: 0.8
+          validation: { verdict: "confirmed", validator_confidence: 0.8 }
+          trace:
+            finding_id: "f_pt_1"
+            reachable: true
+            confidence: 0.8
+            rationale: "GET /download?path= reaches open() with no allowlist."
+            entry_points:
+              - { kind: "http_route", location: "api/files.py:28", controllable_by: "authenticated_user" }
+            call_chain:
+              - { file: "api/files.py", function: "download", line: 28 }
+              - { file: "api/files.py", function: "download", line: 32 }
+          variants: []
+  assert:
+    - type: javascript
+      value: |
+        const o = JSON.parse(output);
+        const ids = o.findings.map(f => f.finding_id).sort();
+        JSON.stringify(ids) === JSON.stringify(['f_pt_1','f_sqli_1'])
+          ? { pass: true, score: 1, reason: 'both reachable findings shipped' }
+          : { pass: false, score: 0, reason: 'shipped ids: ' + ids };
+
+# ── Case B: one reachable + one unreachable → only reachable ships ──────────
+- description: "unreachable finding (blocked by auth) is dropped from the report"
+  vars:
+    expected_findings: 1
+    input:
+      run_id: "run_b"
+      target: { repo_path: "/srv/app" }
+      ready_findings:
+        - finding:
+            finding_id: "f_rce_1"
+            file: "api/import.py"
+            line_start: 50
+            line_end: 55
+            vuln_class: "command_injection"
+            severity: "critical"
+            description: "Import endpoint passes filename into a shell command unsanitized."
+            evidence_snippet: "subprocess.run(f'tar xf {filename}', shell=True)"
+            confidence: 0.95
+          validation: { verdict: "confirmed", validator_confidence: 0.9 }
+          trace:
+            finding_id: "f_rce_1"
+            reachable: true
+            confidence: 0.9
+            rationale: "POST /api/import filename reaches shell unauthenticated."
+            entry_points:
+              - { kind: "http_route", location: "api/import.py:40", controllable_by: "anonymous_user" }
+            call_chain:
+              - { file: "api/import.py", function: "do_import", line: 40 }
+              - { file: "api/import.py", function: "do_import", line: 52 }
+          variants: []
+        - finding:
+            finding_id: "f_dead_1"
+            file: "legacy/old_sql.py"
+            line_start: 20
+            line_end: 20
+            vuln_class: "sql_injection"
+            severity: "high"
+            description: "Legacy query builder interpolates input but the route is unregistered."
+            evidence_snippet: 'cur.execute("... " + val)'
+            confidence: 0.6
+          validation: { verdict: "needs_more_info", validator_confidence: 0.5 }
+          trace:
+            finding_id: "f_dead_1"
+            reachable: false
+            confidence: 0.85
+            rationale: "The only caller is behind a feature flag disabled by default; no live route."
+            blockers:
+              - { kind: "dead_code", location: "legacy/old_sql.py:20", description: "Caller removed from router; flag off." }
+          variants: []
+  assert:
+    - type: javascript
+      value: |
+        const o = JSON.parse(output);
+        const ids = o.findings.map(f => f.finding_id);
+        (!ids.includes('f_dead_1') && ids.includes('f_rce_1'))
+          ? { pass: true, score: 1, reason: 'unreachable dropped, reachable kept' }
+          : { pass: false, score: 0, reason: 'shipped ids: ' + ids };
+
+# ── Case C: admin-gated reachable finding → severity downgraded one step ────
+# Per the prompt: when the trace requires admin auth, drop one severity step
+# (high -> medium) and explain in the description.
+- description: "admin-only reachability downgrades severity high -> medium"
+  vars:
+    expected_findings: 1
+    expected_severity: { f_idor_1: "medium" }
+    input:
+      run_id: "run_c"
+      target: { repo_path: "/srv/app" }
+      ready_findings:
+        - finding:
+            finding_id: "f_idor_1"
+            file: "api/admin_users.py"
+            line_start: 70
+            line_end: 78
+            vuln_class: "idor"
+            severity: "high"
+            description: "Admin user-edit endpoint trusts a client-supplied user_id without ownership check."
+            evidence_snippet: "user = User.get(request.json['user_id']); user.update(...)"
+            confidence: 0.85
+          validation: { verdict: "confirmed", validator_confidence: 0.82 }
+          trace:
+            finding_id: "f_idor_1"
+            reachable: true
+            confidence: 0.8
+            rationale: "Reachable via POST /admin/users/edit but the route is gated by admin auth."
+            entry_points:
+              - { kind: "http_route", location: "api/admin_users.py:60", auth_required: true, controllable_by: "admin" }
+            call_chain:
+              - { file: "api/admin_users.py", function: "edit_user", line: 60 }
+              - { file: "api/admin_users.py", function: "edit_user", line: 72 }
+          variants: []
