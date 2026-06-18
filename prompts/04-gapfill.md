@@ -31,7 +31,38 @@ Read, Grep, Glob.
 # Output
 
 A single JSON object matching `schemas/gapfill_output.schema.json`. No
-prose.
+prose. Use these **exact** top-level keys — no others, no renames:
+
+```json
+{
+  "new_tasks": [
+    {
+      "task_id": "t_gf_1",
+      "attack_class": "ssrf",
+      "scope_hint": "<trust boundary above the sink, concrete>",
+      "target_files": ["<repo-relative path>"],
+      "rationale": "<why this cell is worth hunting>",
+      "priority": 2,
+      "subsystem": "<subsystem name from recon>",
+      "source": "gapfill"
+    }
+  ],
+  "coverage_analysis": {
+    "light_subsystems": [
+      { "subsystem": "<name>", "reason": "<why under-covered>", "findings_count": 0 }
+    ],
+    "unattempted_attack_classes": [
+      { "subsystem": "<name>", "attack_class": "<class>" }
+    ]
+  }
+}
+```
+
+Every item in `new_tasks` MUST include all required HuntTask fields —
+`task_id`, `attack_class`, `scope_hint`, `target_files`, `rationale`,
+`priority` — plus `subsystem` and `source: "gapfill"`. Dropping `rationale`
+or renaming `new_tasks` / `coverage_analysis` / `light_subsystems` /
+`unattempted_attack_classes` is a schema failure.
 
 # Method
 
@@ -47,9 +78,11 @@ prose.
      reader).
 4. For each pick, construct a tight Hunt task: `attack_class`,
    `scope_hint` that quotes the trust boundary, concrete `target_files`.
-5. `coverage_analysis` reports the structural observation: which
-   subsystems are under-covered and which attack classes are
-   unattempted per subsystem.
+5. `coverage_analysis` reports the structural observation, using exactly
+   these two arrays: `light_subsystems` (each `{subsystem, reason,
+   findings_count?}`) for under-covered subsystems, and
+   `unattempted_attack_classes` (each `{subsystem, attack_class}`) for
+   class × subsystem cells never tried.
 
 # Constraints
 

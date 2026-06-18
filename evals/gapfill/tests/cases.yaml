@@ -1,0 +1,72 @@
+# Gapfill test cases. Each `input` is the exact JSON the stage receives (Recon's
+# structured summary + the tasks that already ran). `must_cover` encodes the
+# obvious gaps the stage should fill; assert-gapfill.cjs also derives the
+# no-reissue / cap / tagging rules from the input itself.
+
+# ── Case 1: an untouched subsystem must get covered, ran tuples must not ─────
+# Three subsystems; auth and payments each had one attack class run. The
+# `webhooks` subsystem was never hunted at all → gapfill must target it (SSRF is
+# the plausible class for an outbound-fetch subsystem). It must NOT re-issue the
+# two (subsystem, attack_class) tuples that already ran.
+- description: "untouched subsystem gets a task; completed tuples are not reissued"
+  vars:
+    must_cover: [["webhooks", "ssrf"]]
+    input:
+      recon_summary:
+        subsystems:
+          - { name: "auth", path: "app/auth", language: "python", purpose: "login + session" }
+          - { name: "payments", path: "app/payments", language: "python", purpose: "charge + refund via SQL" }
+          - { name: "webhooks", path: "app/webhooks", language: "python", purpose: "fetches user-supplied callback URLs" }
+        architecture:
+          build_commands: ["pip install -e ."]
+          entry_points:
+            - { kind: "http_route", location: "app/webhooks/views.py:20" }
+          trust_boundaries:
+            - { name: "outbound fetch", description: "webhook URL controlled by user reaches requests.get" }
+      completed_tasks:
+        - { task_id: "t_r_1", subsystem: "auth", attack_class: "auth_bypass", findings_count: 1, gaps_observed: [] }
+        - { task_id: "t_r_2", subsystem: "payments", attack_class: "sql_injection", findings_count: 2, gaps_observed: [] }
+      max_new_tasks: 30
+
+# ── Case 2: respect a tight cap even when many cells are open ────────────────
+# Lots of uncovered cells but max_new_tasks is 2 — the stage must not exceed it.
+- description: "tight max_new_tasks cap is respected with many open cells"
+  vars:
+    input:
+      recon_summary:
+        subsystems:
+          - { name: "uploads", path: "app/uploads", language: "python", purpose: "zip/archive ingestion" }
+          - { name: "parsers", path: "app/parsers", language: "python", purpose: "XML + CSV parsing" }
+          - { name: "admin", path: "app/admin", language: "python", purpose: "admin user management" }
+        architecture:
+          build_commands: ["pip install -e ."]
+          entry_points:
+            - { kind: "http_route", location: "app/uploads/views.py:10" }
+          trust_boundaries:
+            - { name: "archive ingest", description: "user archive extracted to disk" }
+      completed_tasks: []
+      max_new_tasks: 2
+
+# ── Case 3: a gaps_observed hint points the next task ────────────────────────
+# A finished task left a hint that the parsers subsystem has an XML entity path
+# it didn't finish. Gapfill should open that cell (parsers × xxe) and must not
+# re-run the already-completed (parsers, csv? no) — only the ran tuple
+# (uploads, zip_slip) is off-limits.
+- description: "gaps_observed hint is converted into a targeted task"
+  vars:
+    must_cover: [["parsers", "xxe"]]
+    input:
+      recon_summary:
+        subsystems:
+          - { name: "uploads", path: "app/uploads", language: "python", purpose: "zip/archive ingestion" }
+          - { name: "parsers", path: "app/parsers", language: "python", purpose: "XML + CSV parsing with lxml" }
+        architecture:
+          build_commands: ["pip install -e ."]
+          entry_points:
+            - { kind: "file_input", location: "app/parsers/xml.py:8" }
+          trust_boundaries:
+            - { name: "xml parse", description: "attacker XML reaches lxml parser" }
+      completed_tasks:
+        - { task_id: "t_r_9", subsystem: "uploads", attack_class: "zip_slip", findings_count: 1,
+            gaps_observed: ["did not examine app/parsers/xml.py — lxml parser with entity resolution looked reachable but ran out of budget"] }
+      max_new_tasks: 10

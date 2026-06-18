@@ -66,8 +66,20 @@ export async function runFeedback(
 
   const newTasks: Json[] = result.payload.new_hunt_tasks ?? [];
   const existingIds = new Set(db.getAllTasks(ctx.runId).map((t) => t.taskId));
+  // Files of bugs we have already proven reachable. The prompt forbids
+  // re-targeting them (find siblings, not re-test the known bug), but that
+  // semantic rule has no schema backstop — so enforce a deterministic floor.
+  const provenFiles = new Set(reachable.map(({ finding }) => finding.file));
+  const { kept, dropped } = partitionRetests(newTasks, provenFiles);
+  for (const { task, offending } of dropped) {
+    // Surface the drop rather than swallowing it silently.
+    log.info(
+      `[${ctx.runId}] feedback: dropping ${task.task_id} — re-targets a proven file (${offending.join(", ")})`,
+    );
+  }
+  const retestsDropped = dropped.length;
   let added = 0;
-  for (const t of newTasks) {
+  for (const t of kept) {
     t.source ??= "feedback";
     if (existingIds.has(t.task_id)) continue;
     db.addTask(ctx.runId, t);
@@ -76,7 +88,33 @@ export async function runFeedback(
   db.recordCost(ctx.runId, "feedback", null, result.rawResultMessage);
   db.addArtifact(ctx.runId, "feedback", null, "jsonl", result.artifactPath);
   st.succeed(
-    `[${ctx.runId}] feedback: ${added} new tasks from ${reachable.length} reachable traces`,
+    `[${ctx.runId}] feedback: ${added} new tasks from ${reachable.length} reachable traces` +
+      (retestsDropped > 0 ? ` (dropped ${retestsDropped} re-test${retestsDropped === 1 ? "" : "s"})` : ""),
   );
   return added;
+}
+
+/**
+ * Split feedback's proposed tasks into the ones to keep and the ones that
+ * re-test an already-proven file. Feedback exists to hunt a bug's *siblings*,
+ * not to re-test the bug itself; `prompts/07-feedback.md` forbids listing any
+ * proven `finding.file` in a new task's `target_files`. That rule is relational
+ * to the input, so no JSON schema can enforce it — this is the deterministic
+ * floor under it. A drop is unambiguously safe: re-hunting a proven sink is
+ * never useful. Exported (and pure) for unit testing.
+ */
+export function partitionRetests(
+  tasks: Json[],
+  provenFiles: Set<string>,
+): { kept: Json[]; dropped: Array<{ task: Json; offending: string[] }> } {
+  const kept: Json[] = [];
+  const dropped: Array<{ task: Json; offending: string[] }> = [];
+  for (const t of tasks) {
+    const offending: string[] = (t.target_files ?? []).filter((f: string) =>
+      provenFiles.has(f),
+    );
+    if (offending.length > 0) dropped.push({ task: t, offending });
+    else kept.push(t);
+  }
+  return { kept, dropped };
 }

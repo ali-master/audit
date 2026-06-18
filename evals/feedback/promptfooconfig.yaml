@@ -1,0 +1,49 @@
+# yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
+
+# EVAL QUESTION: Given reachable traces (proven bugs with their data-flow), does
+# the Feedback stage (prompts/07-feedback.md) emit schema-valid NEW hunt tasks
+# that hunt the bug's SIBLINGS — tagged `source: feedback` / `t_fb_*`, each with
+# a rationale naming the motivating trace pattern, an integer priority, within
+# max_new_tasks — and crucially does NOT just re-test the bug already found?
+#
+# SCOPE: a tool-less provider can't verify the sibling target_files are real
+# callsites (that needs the agentic harness). This suite grades the deterministic
+# output contract + the anti-retest rule. See evals/README.md.
+#
+# Run from the repo root:
+#   ANTHROPIC_API_KEY=... npx promptfoo@latest eval \
+#     -c evals/feedback/promptfooconfig.yaml \
+#     -o /tmp/feedback-eval.json --no-cache --no-share
+
+description: "Audit pipeline — Stage 07 Feedback: sibling tasks, no retest"
+
+prompts:
+  - file://../lib/stage-prompt.cjs
+
+providers:
+  - id: "anthropic:messages:claude-opus-4-8"
+    config:
+      max_tokens: 8192
+  - id: "anthropic:messages:claude-sonnet-4-6"
+    config:
+      max_tokens: 8192
+
+defaultTest:
+  vars:
+    stageFile: prompts/07-feedback.md
+  options:
+    transform: file://../lib/extract-json.cjs
+  assert:
+    # 1. Cheap valid-JSON gate (full schema check is in the JS assertion via
+    #    ajv, since the schema $refs hunt_task.schema.json across files).
+    - type: is-json
+
+    # 2. Schema + contract: source/prefix tags, cap, priorities, rationale
+    #    coverage, and the no-retest rule.
+    - type: javascript
+      value: file://./assert-feedback.cjs
+
+    - type: not-icontains
+      value: "```"
+
+tests: file://tests/cases.yaml

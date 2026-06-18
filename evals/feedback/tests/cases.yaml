@@ -1,0 +1,87 @@
+# Feedback test cases. Each `input` is the exact JSON the stage receives: proven
+# reachable traces + a recon summary. assert-feedback.cjs grades the output
+# contract (source/prefix tags, cap, priorities, rationale coverage) and the
+# anti-retest rule — none of which need a live repo. (Whether the proposed
+# sibling files are real callsites is left to the agentic harness.)
+
+# ── Case 1: shared-helper bug → hunt the helper's OTHER callers, not itself ──
+# A zip-slip flows through archive_utils.safe_extract. The transferable pattern
+# is "safe_extract is unsafe" — feedback should propose hunting its other call
+# sites, NOT re-issue a task against the exact file/class already proven.
+- description: "shared-helper bug yields sibling tasks, never a retest of itself"
+  vars:
+    input:
+      reachable_traces:
+        - finding:
+            finding_id: "f_imp_1"
+            file: "services/import.py"
+            line_start: 42
+            line_end: 47
+            vuln_class: "zip_slip"
+            severity: "high"
+            description: "User ZIP extracted via archive_utils.safe_extract without path canonicalization."
+            evidence_snippet: "safe_extract(zf, dest)  # services/import.py:42"
+            confidence: 0.9
+          trace:
+            finding_id: "f_imp_1"
+            reachable: true
+            confidence: 0.85
+            rationale: "POST /import uploads a ZIP that reaches safe_extract unauthenticated."
+            entry_points:
+              - { kind: "http_route", location: "api/import.py:10", controllable_by: "anonymous_user" }
+            call_chain:
+              - { file: "api/import.py", function: "do_import", line: 10 }
+              - { file: "lib/archive_utils.py", function: "safe_extract", line: 30 }
+      recon_summary:
+        subsystems:
+          - { name: "import", path: "services/import.py", language: "python", purpose: "archive ingest" }
+          - { name: "backup", path: "services/backup.py", language: "python", purpose: "restore from archive" }
+        architecture:
+          build_commands: ["pip install -e ."]
+          entry_points:
+            - { kind: "http_route", location: "api/import.py:10" }
+          trust_boundaries:
+            - { name: "archive ingest", description: "user archive extracted via shared helper" }
+      max_new_tasks: 40
+
+# ── Case 2: idiom bug (shell=True) → cap respected, contract holds ───────────
+# A command injection via subprocess.run(..., shell=True). The pattern is the
+# shell=True idiom; feedback proposes hunting other shell=True sites. max is 3.
+- description: "shell=True idiom yields capped, well-tagged sibling tasks"
+  vars:
+    input:
+      reachable_traces:
+        - finding:
+            finding_id: "f_exec_1"
+            file: "services/exporter.py"
+            line_start: 88
+            line_end: 88
+            vuln_class: "command_injection"
+            severity: "critical"
+            description: "Exporter builds a shell command from a user filename with shell=True."
+            evidence_snippet: "subprocess.run(f'tar xf {name}', shell=True)  # services/exporter.py:88"
+            confidence: 0.95
+          trace:
+            finding_id: "f_exec_1"
+            reachable: true
+            confidence: 0.9
+            rationale: "GET /export?name= flows unsanitized into the shell command."
+            entry_points:
+              - { kind: "http_route", location: "api/export.py:14", controllable_by: "authenticated_user" }
+            call_chain:
+              - { file: "api/export.py", function: "export", line: 14 }
+              - { file: "services/exporter.py", function: "run_export", line: 88 }
+      recon_summary:
+        subsystems:
+          - { name: "export", path: "services/exporter.py", language: "python", purpose: "data export via shell tools" }
+          - { name: "media", path: "services/media.py", language: "python", purpose: "thumbnail/transcode via ffmpeg shell calls" }
+          - { name: "reports", path: "services/report.py", language: "python", purpose: "PDF generation shelling out to wkhtmltopdf" }
+        architecture:
+          build_commands: ["pip install -e ."]
+          entry_points:
+            - { kind: "http_route", location: "api/export.py:14" }
+            - { kind: "http_route", location: "api/media.py:9" }
+            - { kind: "http_route", location: "api/report.py:22" }
+          trust_boundaries:
+            - { name: "shell exec", description: "user input reaches subprocess with shell=True across several services" }
+      max_new_tasks: 3

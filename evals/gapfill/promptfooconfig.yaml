@@ -1,0 +1,47 @@
+# yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
+
+# EVAL QUESTION: Given Recon's structured output (subsystems + already-run hunt
+# tasks), does the Gapfill stage (prompts/04-gapfill.md) push hunters toward the
+# UNEXAMINED parts — emitting new tasks for under-covered (subsystem ×
+# attack_class) cells, never re-issuing a tuple that already ran, staying within
+# max_new_tasks, and tagging every task `source: gapfill` / `t_gf_*` with an
+# integer priority — all as schema-valid JSON?
+#
+# Run from the repo root:
+#   ANTHROPIC_API_KEY=... npx promptfoo@latest eval \
+#     -c evals/gapfill/promptfooconfig.yaml \
+#     -o /tmp/gapfill-eval.json --no-cache --no-share
+
+description: "Audit pipeline — Stage 04 Gapfill: coverage-driven new tasks"
+
+prompts:
+  - file://../lib/stage-prompt.cjs
+
+providers:
+  - id: "anthropic:messages:claude-opus-4-8"
+    config:
+      max_tokens: 8192
+  - id: "anthropic:messages:claude-sonnet-4-6"
+    config:
+      max_tokens: 8192
+
+defaultTest:
+  vars:
+    stageFile: prompts/04-gapfill.md
+  options:
+    transform: file://../lib/extract-json.cjs
+  assert:
+    # 1. Cheap valid-JSON gate. (Full schema validation — including the
+    #    hunt_task $ref — happens inside the JS assertion via ajv, because
+    #    promptfoo's is-json can't resolve cross-file $refs.)
+    - type: is-json
+
+    # 2. Schema + behavioral: coverage, no-reissue, caps, tags, priorities.
+    - type: javascript
+      value: file://./assert-gapfill.cjs
+
+    # 3. No markdown prose leaked through.
+    - type: not-icontains
+      value: "```"
+
+tests: file://tests/cases.yaml
