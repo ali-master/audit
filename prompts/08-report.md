@@ -40,6 +40,11 @@ A single JSON object matching `schemas/report.schema.json`. No prose.
 # Method
 
 1. For each ready finding:
+   - Carry these fields **verbatim from the input finding** — the schema
+     requires every one of them on each report finding, so do not drop or
+     rename them: `finding_id`, `vuln_class`, `file`, `line_start`,
+     `line_end`, and `description` (extend the description with the
+     downgrade note below when relevant).
    - `title`: short, specific, no marketing words (e.g. "Unauthenticated
      command injection in /api/import via `filename` JSON field", not
      "Critical RCE!").
@@ -71,4 +76,9 @@ A single JSON object matching `schemas/report.schema.json`. No prose.
 - No editorial commentary, no exec summary prose. The consumer is a
   parser.
 - All severities must be one of: critical, high, medium, low, informational.
+- Each finding object uses **exactly** the schema's keys (it sets
+  `additionalProperties: false`): `finding_id`, `title`, `severity`,
+  `vuln_class`, `file`, `line_start`, `line_end`, `description`, `evidence`,
+  `trace`, `recommendation`, plus optional `cwe`, `poc`, `variants`. Do not
+  rename them (e.g. it is `vuln_class`, never `vulnerability_class`).
 - Output must validate against the schema. No prose, no markdown fence.

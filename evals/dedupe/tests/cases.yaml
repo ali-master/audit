@@ -40,7 +40,7 @@
         const o = JSON.parse(output);
         const g = o.groups.find(g => g.member_finding_ids.includes('f_imp_1'));
         // canonical should prefer the finding with a succeeding PoC
-        g && g.canonical_finding_id === 'f_imp_1'
+        return g && g.canonical_finding_id === 'f_imp_1'
           ? { pass: true, score: 1, reason: 'canonical = PoC-proven member' }
           : { pass: false, score: 0, reason: `canonical=${g && g.canonical_finding_id}, expected f_imp_1` };
 

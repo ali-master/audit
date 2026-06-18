@@ -54,6 +54,12 @@ prose.
 
 - Every input finding **must** appear in exactly one group's
   `member_finding_ids`. No drops, no duplicates.
+- Each group object uses **exactly** these keys — the schema sets
+  `additionalProperties: false`, so any extra or renamed key fails
+  validation: `group_id`, `root_cause` (the field is literally
+  `root_cause` — **not** `root_cause_summary` or `summary`),
+  `member_finding_ids`, `canonical_finding_id`, and the optional
+  `variant_summary`.
 - `group_id` format: `g_<canonical_finding_id_short>`.
 - Singletons are allowed (a group of one).
 - Output must validate against the schema. No prose.

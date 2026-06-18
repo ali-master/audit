@@ -59,7 +59,7 @@
       value: |
         const o = JSON.parse(output);
         const ids = o.findings.map(f => f.finding_id).sort();
-        JSON.stringify(ids) === JSON.stringify(['f_pt_1','f_sqli_1'])
+        return JSON.stringify(ids) === JSON.stringify(['f_pt_1','f_sqli_1'])
           ? { pass: true, score: 1, reason: 'both reachable findings shipped' }
           : { pass: false, score: 0, reason: 'shipped ids: ' + ids };
 
@@ -117,7 +117,7 @@
       value: |
         const o = JSON.parse(output);
         const ids = o.findings.map(f => f.finding_id);
-        (!ids.includes('f_dead_1') && ids.includes('f_rce_1'))
+        return (!ids.includes('f_dead_1') && ids.includes('f_rce_1'))
           ? { pass: true, score: 1, reason: 'unreachable dropped, reachable kept' }
           : { pass: false, score: 0, reason: 'shipped ids: ' + ids };
 

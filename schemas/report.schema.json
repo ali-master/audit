@@ -78,6 +78,7 @@
                   "properties": {
                     "kind": { "type": "string" },
                     "location": { "type": "string" },
+                    "auth_required": { "type": "boolean" },
                     "controllable_by": { "type": "string" }
                   }
                 }

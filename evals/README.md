@@ -33,12 +33,14 @@ extension because this package is `"type": "module"`; `.cjs` forces CommonJS.)
 
 ## Running
 
-Run **from the repo root** (paths resolve relative to it):
+Run **from the repo root** (paths resolve relative to it). The API key lives in
+`.env.development.local`, which promptfoo only auto-loads under
+`NODE_ENV=development` — so pass it explicitly with `--env-file`:
 
 ```bash
-npx promptfoo@latest validate config -c evals/dedupe/promptfooconfig.yaml
-npx promptfoo@latest eval -c evals/dedupe/promptfooconfig.yaml -o /tmp/dedupe-eval.json --no-cache --no-share
-npx promptfoo@latest eval -c evals/report/promptfooconfig.yaml -o /tmp/report-eval.json --no-cache --no-share
+bunx promptfoo@latest validate config -c evals/dedupe/promptfooconfig.yaml
+bunx promptfoo@latest eval -c evals/dedupe/promptfooconfig.yaml --env-file .env.development.local -o /tmp/dedupe-eval.json --no-cache --no-share
+bunx promptfoo@latest eval -c evals/report/promptfooconfig.yaml --env-file .env.development.local -o /tmp/report-eval.json --no-cache --no-share
 ```
 
 Inspect `results.stats`, then per-result `response.output`, `score`, and
@@ -70,6 +72,32 @@ against setting `ANTHROPIC_API_KEY` for the agent.) Either:
 - never invents finding ids
 - `summary.total === findings.length`; `by_severity` sums to total
 - admin-gated reachability downgrades severity one step (high → medium)
+
+## Findings from the first run (2026-06-18, opus-4-8 + sonnet-4-6)
+
+Every **behavioral** assertion passed on both suites from the start (clustering,
+reachable-only inclusion, count consistency, admin-gated severity downgrade).
+The failures were all **JSON-schema compliance**, and surfaced three real
+prompt/schema bugs — now fixed; both suites are green (dedupe 8/8, report 6/6):
+
+1. **`08-report.md` omitted a required field.** The schema requires `vuln_class`
+   on every finding, but the prompt never instructed emitting it → both models
+   dropped it → 100% fail. **Fixed:** the prompt now lists the carried-over
+   required fields (`finding_id`, `vuln_class`, `file`, `line_start`,
+   `line_end`, `description`) and pins exact key names.
+2. **`05-dedupe.md` didn't pin the field name.** Models drifted to
+   `root_cause_summary`; the schema requires `root_cause`
+   (`additionalProperties: false`). Sonnet drifted on all 4 cases, Opus on 1.
+   **Fixed:** the prompt now names the exact group keys.
+3. **`report.schema.json` was inconsistent with `trace.schema.json`.** The
+   report prompt copies `entry_points` from the trace, and an admin-gated trace
+   carries `auth_required: true` — which the trace schema allows but the report
+   schema forbade (`additionalProperties: false`). Any admin-gated finding
+   would have failed in production. **Fixed:** `auth_required` added to the
+   report schema's `entry_points` items.
+
+These are exactly the actionable, deterministic results the suites exist to
+produce — and they now stand as regression guards against this class of drift.
 
 ## Evaluating the agentic stages
 

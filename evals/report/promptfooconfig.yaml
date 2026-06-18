@@ -17,8 +17,14 @@ prompts:
   - file://../lib/stage-prompt.cjs
 
 providers:
-  - "anthropic:messages:claude-opus-4-8"
-  - "anthropic:messages:claude-sonnet-4-6"
+  # max_tokens raised so a long report isn't truncated into invalid JSON
+  # (truncation would otherwise read as a false schema failure).
+  - id: "anthropic:messages:claude-opus-4-8"
+    config:
+      max_tokens: 8192
+  - id: "anthropic:messages:claude-sonnet-4-6"
+    config:
+      max_tokens: 8192
 
 defaultTest:
   vars:
